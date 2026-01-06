@@ -417,7 +417,7 @@ def compute_prices(departement, palettes, palette_parfaite,
                    constraints=None):
 
     if constraints is None:
-    constraints = load_constraints()
+        constraints = load_constraints()
 
     poids_total = sum(p["poids"] for p in palettes)
     poids_palettes = [p["poids"] for p in palettes]
