@@ -3,9 +3,12 @@ import numpy as np
 import math
 import re
 
-# ---------------- UTILS ----------------
+# ============================================================
+# UTILS
+# ============================================================
+
 def to_float(x):
-    if x is None or x == "":
+    if x is None or str(x).strip() == "":
         return np.nan
     x = str(x).replace("€", "").replace(" ", "").replace(",", ".")
     try:
@@ -23,22 +26,35 @@ def extract_dept(x):
     return m.group(1) if m else None
 
 def parse_range(colname):
+    """
+    Parse des colonnes du type '0 à 4 kg', '100.1-150.0 kg', etc.
+    Renvoie (min,max) ou None
+    """
     if not isinstance(colname, str):
         return None
-    col = colname.lower().replace("kg", "").strip()
+    col = colname.lower().replace("kg", "").strip().replace(",", ".")
 
+    # formats "0 à 4"
     m = re.search(r"([0-9.]+)\s*à\s*([0-9.]+)", col)
     if m:
         return float(m.group(1)), float(m.group(2))
 
+    # formats "0.1-29.0"
     m = re.search(r"([0-9.]+)\s*-\s*([0-9.]+)", col)
     if m:
         return float(m.group(1)), float(m.group(2))
 
     return None
 
-# ---------------- TAXES ----------------
+# ============================================================
+# TAXES
+# ============================================================
+
 def load_taxes_from_sheet(df_raw):
+    """
+    Sheet format:
+    Transporteurs | Taux taxe gasoil
+    """
     df = df_raw.copy()
     df.columns = df.iloc[0]
     df = df.iloc[1:].copy()
@@ -55,37 +71,60 @@ def appliquer_taxe(prix_base, transporteur, taxes):
     taux = taxes.get(transporteur.upper(), 0)
     return prix_base * (1 + (taux / 100))
 
-# ---------------- PARSERS Google Sheets ----------------
+# ============================================================
+# PARSERS GOOGLE SHEETS
+# ============================================================
+
+def _detect_header_row(df, keywords=("kg",), min_matches=5, max_scan=80):
+    for i in range(min(len(df), max_scan)):
+        row = df.iloc[i].astype(str).str.lower()
+        if sum(row.str.contains(k).sum() for k in keywords) >= min_matches:
+            return i
+    return None
+
+def _detect_first_data_row(df, start, col=0, max_scan=60):
+    """
+    Détecte la première ligne contenant un département (01, 02, ..., 95)
+    """
+    for i in range(start, min(len(df), start + max_scan)):
+        v = str(df.iloc[i, col]).strip()
+        if re.match(r"^\d{1,2}$", v):
+            return i
+        if re.match(r"^\d{2}\s", v):  # ex: '01 AIN'
+            return i
+    return None
+
 def load_geodis_from_sheet(df_raw):
+    """
+    Détecte automatiquement la ligne d'en-tête (tranches kg)
+    puis la colonne département.
+    """
     df = df_raw.copy()
 
-    # On cherche la ligne d'en-tête : celle qui contient "depart" ou "dpt"
-    header_row = None
-    for i in range(min(len(df), 50)):  # on scanne les 50 premières lignes
-        row = df.iloc[i].astype(str).str.lower()
-        joined = " ".join(row.tolist())
-        non_empty = (df.iloc[i].astype(str).str.strip() != "").sum()
-
-        if ("depart" in joined or "dpt" in joined) and non_empty >= 5:
-            header_row = i
-            break
-
+    header_row = _detect_header_row(df, keywords=("kg", "à"), min_matches=5)
     if header_row is None:
-        raise ValueError("GEODIS: ligne d'en-tête introuvable (departement/dpt non trouvé)")
+        raise ValueError("GEODIS: impossible de détecter la ligne des tranches.")
 
     headers = df.iloc[header_row].tolist()
-    data = df.iloc[header_row + 1:].copy()
+    data_start = _detect_first_data_row(df, header_row + 1, col=0)
+    if data_start is None:
+        data_start = header_row + 1
 
-    data.columns = headers
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+    data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
 
-    # Trouver la colonne département
-    dept_candidates = [c for c in data.columns if isinstance(c, str) and ("depart" in c.lower() or "dpt" in c.lower())]
+    # Ajuster taille des headers
+    headers = headers[:data.shape[1]]
+    data.columns = headers
+
+    # Trouver colonne département
+    dept_candidates = [
+        c for c in data.columns
+        if isinstance(c, str) and ("depart" in c.lower() or "dpt" in c.lower())
+    ]
     if dept_candidates:
         dept_col = dept_candidates[0]
     else:
-        # sinon on prend la 1ère colonne
         dept_col = data.columns[0]
 
     data = data.rename(columns={dept_col: "departement"})
@@ -95,116 +134,110 @@ def load_geodis_from_sheet(df_raw):
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
+    data = data[data["departement"].notna()]
     return data
+
 def load_dachser_from_sheet(df_raw):
     """
-    Parsing DACHSER depuis Google Sheets (format brut)
-    Version robuste : détecte la ligne des tranches "kg"
-    puis construit les colonnes sous forme "0.1-29.0 kg", etc.
+    DACHSER: souvent déjà sous forme '0.1-29.0 kg'
+    On détecte la ligne d'entête avec beaucoup de 'kg'
     """
     df = df_raw.copy()
 
-    # 1) Trouver les 2 lignes qui contiennent les bornes de tranches
-    # Dans ton Excel : debuts ligne 3, fins ligne 4
-    # Mais en GSheet ça peut bouger => on détecte
-    debut_row = None
-    fin_row = None
+    header_row = _detect_header_row(df, keywords=("kg",), min_matches=5)
+    if header_row is None:
+        raise ValueError("DACHSER: ligne entête introuvable.")
 
-    for i in range(min(len(df), 60)):
-        row = df.iloc[i].astype(str).str.lower()
-        if row.str.contains("kg").sum() >= 5 and row.str.contains("-").sum() >= 5:
-            # ex: "0.1-29.0 kg" si déjà concaténé
-            debut_row = i
-            break
-
-    # Si pas trouvé en "déjà concaténé", on cherche 2 lignes séparées
-    if debut_row is None:
-        for i in range(min(len(df), 60)):
-            row = df.iloc[i].astype(str).str.lower()
-            if row.str.contains("kg").sum() >= 5 and row.str.contains("0").any():
-                debut_row = i
-                fin_row = i + 1
-                break
-    else:
-        # si déjà concaténé, fin_row inutile
-        fin_row = None
-
-    if debut_row is None:
-        raise ValueError("DACHSER: impossible de détecter les lignes de tranches poids.")
-
-    # 2) Déterminer la première ligne de données (départements)
-    # On cherche la première ligne après debut_row où la colonne 0 ressemble à un département
-    data_start = None
-    for i in range(debut_row + 1, min(len(df), debut_row + 30)):
-        val = str(df.iloc[i, 0]).strip()
-        if re.match(r"^\d{1,2}$", val):
-            data_start = i
-            break
-
+    headers = df.iloc[header_row].tolist()
+    data_start = _detect_first_data_row(df, header_row + 1, col=0)
     if data_start is None:
-        # fallback : format Excel classique (souvent data à +7)
-        data_start = debut_row + 7
+        data_start = header_row + 1
 
     data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
 
-    # 3) Nommer colonne département
+    headers = headers[:data.shape[1]]
+    data.columns = headers
+
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].astype(str).str.strip().str.zfill(2)
 
-    # 4) Construire les colonnes de tranches
-    cols = list(data.columns)
+    for col in data.columns:
+        if col != "departement":
+            data[col] = data[col].apply(to_float)
 
-    if fin_row is None:
-        # Déjà des colonnes style "0.1-29.0 kg" dans la feuille
-
+    data = data[data["departement"].str.match(r"^\d{2}$", na=False)]
+    return data
 
 def load_kuehne_from_sheet(df_raw):
+    """
+    KUEHNE: la 1ère ligne contient des seuils (1,30,40,...) etc.
+    """
     df = df_raw.copy()
+
     header1 = df.iloc[0].tolist()
-    cols = ["Pays","departement","Destination","Difficulte","Poids_reel"] + header1[5:]
+    cols = ["Pays", "departement", "Destination", "Difficulte", "Poids_reel"] + header1[5:]
 
     data = df.iloc[2:].copy()
     data.columns = cols
+    data = data.dropna(how="all")
 
     data["departement"] = data["departement"].astype(str).str.strip()
     data = data[data["departement"].str.match(r"^\d{1,2}$", na=False)]
     data["departement"] = data["departement"].str.zfill(2)
 
     for col in data.columns:
-        if col not in ["Pays","departement","Destination","Difficulte","Poids_reel"]:
+        if col not in ["Pays", "departement", "Destination", "Difficulte", "Poids_reel"]:
             data[col] = data[col].apply(to_float)
 
     return data
 
 def load_xpo_from_sheet(df_raw):
+    """
+    XPO: colonnes du type:
+    '.01 pal pal-.50 pal pal'
+    '.51 pal pal-1.00 pal pal'
+    '2.01 pal pal-3.00 pal pal'
+    etc.
+    """
     df = df_raw.copy()
-    deb = df.iloc[13].tolist()
-    fin = df.iloc[14].tolist()
 
-    data = df.iloc[18:].copy()
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+    # Détecter header row (celle contenant 'pal')
+    header_row = None
+    for i in range(min(len(df), 80)):
+        row = df.iloc[i].astype(str).str.lower()
+        if row.str.contains("pal").sum() >= 5:
+            header_row = i
+            break
+
+    if header_row is None:
+        raise ValueError("XPO: ligne entête introuvable.")
+
+    headers = df.iloc[header_row].tolist()
+    data_start = _detect_first_data_row(df, header_row + 1, col=0)
+    if data_start is None:
+        data_start = header_row + 1
+
+    data = df.iloc[data_start:].copy()
+    data = data.dropna(how="all")
+
+    headers = headers[:data.shape[1]]
+    data.columns = headers
+
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
-
-    cols = list(data.columns)
-    col_map = {}
-    for idx in range(1, min(12, len(cols))):
-        d = deb[idx] if idx < len(deb) else None
-        f = fin[idx] if idx < len(fin) else None
-        if d not in [None, ""] and f not in [None, ""]:
-            col_map[cols[idx]] = f"{d} pal-{f} pal"
-
-    data = data.rename(columns=col_map)
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
+    data = data[data["departement"].notna()]
     return data
 
-# ---------------- CALCULS KG ----------------
+# ============================================================
+# CALCUL PRIX PAR TRANCHES (GEODIS / DACHSER)
+# ============================================================
+
 def trouver_prix_forfait(row, poids):
     for col in row.index:
         r = parse_range(col)
@@ -233,6 +266,10 @@ def prix_transporteurs_kg(df, departement, poids_total):
     row = r.iloc[0]
     return trouver_prix_forfait(row, poids_total) if poids_total <= 100 else trouver_prix_100kg(row, poids_total)
 
+# ============================================================
+# KUEHNE
+# ============================================================
+
 def prix_kuehne(df, departement, poids_total):
     dep = str(departement).zfill(2)
     r = df[df["departement"] == dep]
@@ -249,30 +286,51 @@ def prix_kuehne(df, departement, poids_total):
         return row[str(seuil)]
 
     poids_arr = arrondi_10kg(poids_total)
+
+    # on prend la dernière colonne <= poids_total
     seuil = max([s for s in seuils if s <= poids_total], default=None)
     if seuil is None:
         return np.nan
+
     prix_100 = row[str(seuil)]
     return prix_100 * (poids_arr / 100)
 
-# ---------------- XPO ----------------
+# ============================================================
+# XPO
+# ============================================================
+
 def calcul_palettes_facturees_xpo(poids_palettes):
+    """
+    Règle:
+    - si plus de 1 palette : on facture au nb entier de palettes (pas de demi)
+    - si 1 palette : <200kg => 0.5 ; sinon 1
+    """
     if len(poids_palettes) > 1:
         return float(len(poids_palettes))
     return 0.5 if poids_palettes[0] < 200 else 1.0
 
 def trouver_colonne_xpo(row, total_palettes):
-    for c in row.index:
-        if isinstance(c, str) and "pal" in c.lower():
-            nums = re.findall(r"[0-9.]+", c.replace(",", "."))
-            if len(nums) >= 2:
-                a = float(nums[0]); b = float(nums[1])
-                if a >= 1.01:
-                    if a < total_palettes <= b:
-                        return c
-                else:
-                    if a <= total_palettes <= b:
-                        return c
+    """
+    Trouve la bonne colonne XPO en fonction du nb palettes facturé.
+    Colonne typique: '.51 pal pal-1.00 pal pal'
+    """
+    for col in row.index:
+        if not isinstance(col, str):
+            continue
+        if "pal" not in col.lower():
+            continue
+
+        nums = re.findall(r"[0-9.]+", col.replace(",", "."))
+        if len(nums) >= 2:
+            a = float(nums[0]); b = float(nums[1])
+
+            # Important: si total_palettes = 2, on doit aller sur 2.01-3.00 pal
+            if total_palettes > 1 and a < 1.01:
+                continue
+
+            if a <= total_palettes <= b:
+                return col
+
     return None
 
 def prix_xpo(df_xpo, departement, poids_palettes, hauteur_cm, palette_parfaite):
@@ -296,7 +354,10 @@ def prix_xpo(df_xpo, departement, poids_palettes, hauteur_cm, palette_parfaite):
 
     return row[col], f"XPO : {total_pal} palette(s), tranche {col}"
 
-# ---------------- API PRINCIPALE ----------------
+# ============================================================
+# API PRINCIPALE
+# ============================================================
+
 def compute_prices(departement, palettes, palette_parfaite,
                    df_geodis, df_dachser, df_kuehne, df_xpo, taxes):
 
@@ -306,15 +367,19 @@ def compute_prices(departement, palettes, palette_parfaite,
 
     results = []
 
+    # GEODIS
     base = prix_transporteurs_kg(df_geodis, departement, poids_total)
     results.append(("GEODIS", base, appliquer_taxe(base, "GEODIS", taxes), f"Poids total {poids_total} kg"))
 
+    # DACHSER
     base = prix_transporteurs_kg(df_dachser, departement, poids_total)
     results.append(("DACHSER", base, appliquer_taxe(base, "DACHSER", taxes), f"Poids total {poids_total} kg"))
 
+    # KUEHNE
     base = prix_kuehne(df_kuehne, departement, poids_total)
     results.append(("KUEHNE", base, appliquer_taxe(base, "KUEHNE", taxes), f"Poids total {poids_total} kg"))
 
+    # XPO
     base, info = prix_xpo(df_xpo, departement, poids_palettes, hauteur_max, palette_parfaite)
     results.append(("XPO", base, appliquer_taxe(base, "XPO", taxes), info))
 
@@ -326,4 +391,5 @@ def compute_prices(departement, palettes, palette_parfaite,
             "Prix_taxe": None if pd.isna(total) else round(float(total), 2),
             "Info": info
         })
+
     return out
