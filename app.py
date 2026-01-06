@@ -86,45 +86,45 @@ if "palettes" not in st.session_state:
 # -----------------------------------------------------------------------------
 # DEBUG (affiché dans l'UI)
 # -----------------------------------------------------------------------------
-with st.expander("🛠️ Debug / Données chargées", expanded=False):
-    try:
-        # Change la version si tu veux forcer le reload
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
+DEBUG = st.checkbox("🛠️ Activer le mode debug", value=False)
 
-        st.write("✅ IDs / Onglets utilisés :")
-        st.json(ids)
+if DEBUG:
+    with st.expander("🛠️ Debug / Données chargées", expanded=True):
+        try:
+            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
 
-        st.write("✅ Résumé chargement :")
-        col1, col2, col3, col4 = st.columns(4)
+            st.write("✅ IDs / Onglets utilisés :")
+            st.json(ids)
 
-        with col1:
-            st.metric("GEODIS lignes", len(df_geodis))
-            st.metric("GEODIS départements", df_geodis["departement"].nunique())
-            st.write(df_geodis["departement"].astype(str).unique()[:20])
+            st.write("✅ Résumé chargement :")
+            col1, col2, col3, col4 = st.columns(4)
 
-        with col2:
-            st.metric("DACHSER lignes", len(df_dachser))
-            st.metric("DACHSER départements", df_dachser["departement"].nunique())
-            st.write(df_dachser["departement"].astype(str).unique()[:20])
+            with col1:
+                st.metric("GEODIS lignes", len(df_geodis))
+                st.metric("GEODIS départements", df_geodis["departement"].nunique())
+                st.write(df_geodis["departement"].astype(str).unique()[:20])
 
-        with col3:
-            st.metric("KUEHNE lignes", len(df_kuehne))
-            st.metric("KUEHNE départements", df_kuehne["departement"].nunique())
-            st.write(df_kuehne["departement"].astype(str).unique()[:20])
+            with col2:
+                st.metric("DACHSER lignes", len(df_dachser))
+                st.metric("DACHSER départements", df_dachser["departement"].nunique())
+                st.write(df_dachser["departement"].astype(str).unique()[:20])
 
-        with col4:
-            st.metric("XPO lignes", len(df_xpo))
-            st.metric("XPO départements", df_xpo["departement"].nunique())
-            st.write(df_xpo["departement"].astype(str).unique()[:20])
+            with col3:
+                st.metric("KUEHNE lignes", len(df_kuehne))
+                st.metric("KUEHNE départements", df_kuehne["departement"].nunique())
+                st.write(df_kuehne["departement"].astype(str).unique()[:20])
 
-        st.write("✅ Taxes :")
-        st.json(taxes)
+            with col4:
+                st.metric("XPO lignes", len(df_xpo))
+                st.metric("XPO départements", df_xpo["departement"].nunique())
+                st.write(df_xpo["departement"].astype(str).unique()[:20])
 
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
+            st.write("✅ Taxes :")
+            st.json(taxes)
 
-
+        except Exception as e:
+            st.error(str(e))
+            st.stop()
 # -----------------------------------------------------------------------------
 # Inputs
 # -----------------------------------------------------------------------------
