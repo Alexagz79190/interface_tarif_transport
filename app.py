@@ -87,10 +87,10 @@ def load_all_data(version="v1"):
 # ---------------------------------------------------------------------
 # Bouton "forcer rechargement" (uniquement en debug)
 # ---------------------------------------------------------------------
-if DEBUG:
-    if st.button("🔄 Forcer rechargement données"):
-        st.cache_data.clear()
-        st.rerun()
+
+if st.button("🔄 Forcer rechargement données"):
+    st.cache_data.clear()
+    st.rerun()
 
 # ---------------------------------------------------------------------
 # Init session palettes
