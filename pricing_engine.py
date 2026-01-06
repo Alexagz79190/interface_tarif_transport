@@ -208,73 +208,38 @@ def load_kuehne_from_sheet(df_raw):
     return data
 
 def load_xpo_from_sheet(df_raw):
+    """
+    Lecture XPO depuis Google Sheets quand la feuille est déjà propre :
+    - 1ère ligne = headers
+    - colonne 0 = departement
+    - colonnes suivantes = tranches palettes (0.01 pal-0.50 pal, etc.)
+    OU colonnes simplifiées (1,2,3...) si tu as renommé en local
+    """
     df = df_raw.copy()
 
-    # ✅ Nettoyer lignes vides
-    df = df.replace("", np.nan)
-    df = df.dropna(how="all")
-    df = df.reset_index(drop=True)
+    # Première ligne = header
+    df.columns = df.iloc[0]
+    df = df.iloc[1:].copy()
 
-    # 1) Chercher la ligne contenant "DE" en colonne 0
-    header_de = None
-    for i in range(min(len(df), 120)):
-        v = str(df.iloc[i, 0]).strip().upper()
-        if v == "DE":
-            header_de = i
-            break
+    # Nettoyage colonnes
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()].copy()
 
-    if header_de is None:
-        # Debug utile si ça ne match pas
-        raise ValueError(
-            f"XPO: ligne entête 'DE' introuvable. "
-            f"Valeurs colonne 0 (20 premières): {df.iloc[:20,0].tolist()}"
-        )
+    # La première colonne doit être departement
+    if df.columns[0].lower() != "departement":
+        df = df.rename(columns={df.columns[0]: "departement"})
 
-    header_a = header_de + 1
-    debuts = df.iloc[header_de].tolist()
-    fins = df.iloc[header_a].tolist()
+    df["departement"] = df["departement"].apply(extract_dept)
+    df = df[df["departement"].notna()]
+    df["departement"] = df["departement"].astype(str).str.zfill(2)
 
-    # 2) Trouver la première ligne où la colonne 0 contient un dept (ex: '01 AIN')
-    data_start = None
-    for i in range(header_a + 1, min(len(df), header_a + 120)):
-        val = str(df.iloc[i, 0]).strip()
-        if re.match(r"^\d{2}\s", val):
-            data_start = i
-            break
-
-    if data_start is None:
-        raise ValueError("XPO: impossible de détecter le début des départements (ex '01 AIN').")
-
-    data = df.iloc[data_start:].copy()
-    data = data.dropna(how="all")
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
-
-    # dept
-    data = data.rename(columns={data.columns[0]: "departement"})
-    data["departement"] = data["departement"].apply(extract_dept)
-    data = data[data["departement"].notna()]
-    data["departement"] = data["departement"].astype(str).str.zfill(2)
-
-    # renommer colonnes palettes
-    cols = list(data.columns)
-    col_map = {}
-
-    for idx in range(1, len(cols)):
-        d = debuts[idx] if idx < len(debuts) else None
-        f = fins[idx] if idx < len(fins) else None
-
-        if d not in [None, ""] and f not in [None, ""]:
-            d = str(d).replace(",", ".").strip()
-            f = str(f).replace(",", ".").strip()
-            col_map[cols[idx]] = f"{d} pal-{f} pal"
-
-    data = data.rename(columns=col_map)
-
-    for col in data.columns:
+    # Conversion float
+    for col in df.columns:
         if col != "departement":
-            data[col] = data[col].apply(to_float)
+            df[col] = df[col].apply(to_float)
 
-    return data
+    return df
+
 
 
 # ============================================================
