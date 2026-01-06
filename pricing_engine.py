@@ -69,8 +69,11 @@ def parse_range(colname):
 
 def load_taxes_from_sheet(df_raw):
     """
-    Sheet format:
-    Transporteurs | Taux taxe gasoil
+    Le sheet taxe_go contient :
+      - Onglet taxe_go : Transporteurs | Taux taxe gasoil
+      - Onglet rfa     : Transporteurs | Taux RFA
+    Mais ici df_raw est déjà un DataFrame de l'onglet chargé.
+    Donc on garde le parsing générique :
     """
     df = df_raw.copy()
     df.columns = df.iloc[0]
@@ -78,15 +81,25 @@ def load_taxes_from_sheet(df_raw):
 
     df.columns = [str(c).strip() for c in df.columns]
     df["Transporteurs"] = df["Transporteurs"].astype(str).str.strip().str.upper()
-    df["Taux taxe gasoil"] = df["Taux taxe gasoil"].apply(to_float)
 
-    return dict(zip(df["Transporteurs"], df["Taux taxe gasoil"]))
+    # colonne possible : "Taux taxe gasoil" ou "Taux RFA"
+    value_col = [c for c in df.columns if "taux" in c.lower()][0]
+    df[value_col] = df[value_col].apply(to_float)
+
+    return dict(zip(df["Transporteurs"], df[value_col]))
 
 def appliquer_taxe(prix_base, transporteur, taxes):
     if pd.isna(prix_base):
         return np.nan
     taux = taxes.get(transporteur.upper(), 0)
     return prix_base * (1 + (taux / 100))
+
+def appliquer_taxe_et_rfa(prix_base, transporteur, taxes, rfa):
+    if pd.isna(prix_base):
+        return np.nan
+    t = taxes.get(transporteur.upper(), 0) or 0
+    r = rfa.get(transporteur.upper(), 0) or 0
+    return prix_base * (1 + (t / 100)) * (1 - (r / 100))
 
 # ============================================================
 # PARSERS GOOGLE SHEETS
@@ -320,51 +333,87 @@ def prix_kuehne(df, departement, poids_total):
 # XPO
 # ============================================================
 
-def calcul_palettes_facturees_xpo(poids_palettes):
+def format_ok_xpo(L, l):
+    formats_ok = {(60, 80), (80, 120), (100, 120)}
+    dims = tuple(sorted([int(L), int(l)]))  # ex: 120x80 -> (80,120)
+    return dims in {tuple(sorted(x)) for x in formats_ok}
+
+def is_full_pallet_xpo(poids):
+    return 200.01 <= poids <= 1000
+
+def is_half_pallet_xpo(poids, L, l):
+    return poids <= 200 and format_ok_xpo(L, l)
+
+def calcul_palettes_facturees_xpo(palettes):
     """
-    Règle:
-    - si plus de 1 palette : on facture au nb entier de palettes (pas de demi)
-    - si 1 palette : <200kg => 0.5 ; sinon 1
+    palettes = list of dict {poids, L, l, H}
+    règle:
+      - si nb palettes > 1 : total_pal = nb palettes (pas de demi)
+      - sinon :
+           - si demi-palette -> 0.5
+           - sinon -> 1
     """
-    if len(poids_palettes) > 1:
-        return float(len(poids_palettes))
-    return 0.5 if poids_palettes[0] < 200 else 1.0
+    if len(palettes) > 1:
+        return float(len(palettes))
+
+    p = palettes[0]
+    if is_half_pallet_xpo(p["poids"], p["L"], p["l"]):
+        return 0.5
+    return 1.0
 
 def trouver_colonne_xpo(row, total_palettes):
     """
-    Trouve la bonne colonne XPO en fonction du nb palettes facturé.
-    Colonne typique: '.51 pal pal-1.00 pal pal'
+    Les colonnes sont du style:
+      ".01 pal pal-.50 pal pal"
+      ".51 pal pal-1.00 pal pal"
+      "1.01 pal pal-2.00 pal pal"
+    ou bien après ton cleaning:
+      ".01 pal" ".51 pal" "1.01 pal" etc.
+    On gère les deux.
     """
-    for col in row.index:
-        if not isinstance(col, str):
+    for c in row.index:
+        if not isinstance(c, str):
             continue
-        if "pal" not in col.lower():
+        if "pal" not in c.lower():
             continue
 
-        nums = re.findall(r"[0-9.]+", col.replace(",", "."))
+        nums = re.findall(r"[0-9.]+", c.replace(",", "."))
         if len(nums) >= 2:
-            a = float(nums[0]); b = float(nums[1])
+            a = float(nums[0])
+            b = float(nums[1])
+        elif len(nums) == 1:
+            # cas colonnes simplifiées ".01 pal" => on interprète borne basse
+            a = float(nums[0])
+            # borne haute = prochaine colonne - 0.01 ? => on ne peut pas
+            # Donc on ignore ce cas ici
+            continue
+        else:
+            continue
 
-            # Important: si total_palettes = 2, on doit aller sur 2.01-3.00 pal
-            if total_palettes > 1 and a < 1.01:
-                continue
-
-            if a <= total_palettes <= b:
-                return col
+        if a <= total_palettes <= b:
+            return c
 
     return None
 
-def prix_xpo(df_xpo, departement, poids_palettes, hauteur_cm, palette_parfaite):
+def prix_xpo(df_xpo, departement, palettes, palette_parfaite):
     dep = str(departement).zfill(2)
 
     if not palette_parfaite:
         return np.nan, "XPO ignoré : palette parfaite obligatoire"
-    if hauteur_cm > 220:
-        return np.nan, "XPO ignoré : hauteur > 220 cm"
 
-    total_pal = calcul_palettes_facturees_xpo(poids_palettes)
+    # Contrôle hauteur + format + poids palette
+    for i, p in enumerate(palettes):
+        if p["H"] > 220:
+            return np.nan, f"XPO ignoré : palette {i+1} hauteur > 220 cm"
+        if not format_ok_xpo(p["L"], p["l"]):
+            return np.nan, f"XPO ignoré : palette {i+1} format {p['L']}x{p['l']} non accepté"
+        if p["poids"] > 1000:
+            return np.nan, f"XPO ignoré : palette {i+1} > 1000 kg"
 
-    r = df_xpo[df_xpo["departement"] == dep]
+    # Calcul du nombre facturé
+    total_pal = calcul_palettes_facturees_xpo(palettes)
+
+    r = df_xpo[df_xpo["departement"].astype(str).str.zfill(2) == dep]
     if r.empty:
         return np.nan, "XPO ignoré : département absent"
 
@@ -375,12 +424,13 @@ def prix_xpo(df_xpo, departement, poids_palettes, hauteur_cm, palette_parfaite):
 
     return row[col], f"XPO : {total_pal} palette(s), tranche {col}"
 
+
 # ============================================================
 # API PRINCIPALE
 # ============================================================
 
 def compute_prices(departement, palettes, palette_parfaite,
-                   df_geodis, df_dachser, df_kuehne, df_xpo, taxes):
+                   df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa):
 
     poids_total = sum(p["poids"] for p in palettes)
     poids_palettes = [p["poids"] for p in palettes]
@@ -390,19 +440,21 @@ def compute_prices(departement, palettes, palette_parfaite,
 
     # GEODIS
     base = prix_transporteurs_kg(df_geodis, departement, poids_total)
-    results.append(("GEODIS", base, appliquer_taxe(base, "GEODIS", taxes), f"Poids total {poids_total} kg"))
+    results.append(("GEODIS", base, appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa), f"Poids total {poids_total} kg"))
+
 
     # DACHSER
     base = prix_transporteurs_kg(df_dachser, departement, poids_total)
-    results.append(("DACHSER", base, appliquer_taxe(base, "DACHSER", taxes), f"Poids total {poids_total} kg"))
+    results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), f"Poids total {poids_total} kg"))
 
     # KUEHNE
     base = prix_kuehne(df_kuehne, departement, poids_total)
-    results.append(("KUEHNE", base, appliquer_taxe(base, "KUEHNE", taxes), f"Poids total {poids_total} kg"))
+    results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
 
     # XPO
-    base, info = prix_xpo(df_xpo, departement, poids_palettes, hauteur_max, palette_parfaite)
-    results.append(("XPO", base, appliquer_taxe(base, "XPO", taxes), info))
+    base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite)
+    results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
+
 
     out = []
     for t, base, total, info in results:
