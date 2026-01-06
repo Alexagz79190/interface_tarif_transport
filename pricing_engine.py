@@ -268,11 +268,33 @@ def trouver_prix_100kg(row, poids):
 
 def prix_transporteurs_kg(df, departement, poids_total):
     dep = str(departement).zfill(2)
-    r = df[df["departement"] == dep]
+
+    if "departement" not in df.columns:
+        raise ValueError(f"ERREUR: colonne 'departement' absente. Colonnes: {df.columns.tolist()}")
+
+    # DEBUG : voir si dep existe
+    if dep not in df["departement"].astype(str).unique():
+        raise ValueError(
+            f"ERREUR: département {dep} introuvable dans la table.\n"
+            f"Départements dispo (20): {df['departement'].astype(str).unique()[:20]}"
+        )
+
+    r = df[df["departement"].astype(str) == dep]
     if r.empty:
-        return np.nan
+        raise ValueError(f"ERREUR: filtre département {dep} donne vide (incohérence).")
+
     row = r.iloc[0]
+
+    # DEBUG : voir les colonnes tranches
+    cols_ranges = [c for c in row.index if parse_range(c)]
+    if not cols_ranges:
+        raise ValueError(
+            f"ERREUR: aucune colonne tranche reconnue par parse_range().\n"
+            f"Colonnes: {list(row.index)[:30]}"
+        )
+
     return trouver_prix_forfait(row, poids_total) if poids_total <= 100 else trouver_prix_100kg(row, poids_total)
+
 
 # ============================================================
 # KUEHNE
