@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import math
 import re
+from config_loader import load_constraints
 
 # ============================================================
 # UTILS
@@ -339,90 +340,62 @@ def prix_kuehne(df, departement, poids_total):
     prix_100 = row[str(seuil)]
     return prix_100 * (poids_arr / 100)
 
+    max_weight_cfg = constraints.get("KUEHNE", {}).get("max_weight_kg", None)
+    if max_weight_cfg is not None and poids_total > max_weight_cfg:
+        return np.nan
+
+
 # ============================================================
 # XPO
 # ============================================================
 
-def format_ok_xpo(L, l):
-    formats_ok = {(60, 80), (80, 120), (100, 120)}
-    dims = tuple(sorted([int(L), int(l)]))  # ex: 120x80 -> (80,120)
-    return dims in {tuple(sorted(x)) for x in formats_ok}
+def _format_ok(L, l, allowed_formats):
+    dims = tuple(sorted([int(L), int(l)]))
+    allowed = {tuple(sorted(x)) for x in allowed_formats}
+    return dims in allowed
 
-def is_full_pallet_xpo(poids):
-    return 200.01 <= poids <= 1000
+def _is_half_pallet(p, cfg_xpo):
+    hp = cfg_xpo.get("half_pallet", {})
+    if not hp.get("enabled", True):
+        return False
+    return p["poids"] <= hp.get("max_weight_kg", 200)
 
-def is_half_pallet_xpo(poids, L, l):
-    return poids <= 200 and format_ok_xpo(L, l)
-
-def calcul_palettes_facturees_xpo(palettes):
-    """
-    palettes = list of dict {poids, L, l, H}
-    règle:
-      - si nb palettes > 1 : total_pal = nb palettes (pas de demi)
-      - sinon :
-           - si demi-palette -> 0.5
-           - sinon -> 1
-    """
-    if len(palettes) > 1:
+def _palettes_facturees(palettes, cfg_xpo):
+    if len(palettes) > 1 and cfg_xpo.get("billing", {}).get("no_half_when_multiple", True):
         return float(len(palettes))
 
+    # une seule palette
     p = palettes[0]
-    if is_half_pallet_xpo(p["poids"], p["L"], p["l"]):
+    if _is_half_pallet(p, cfg_xpo) and cfg_xpo.get("half_pallet", {}).get("only_if_single_palette", True):
         return 0.5
     return 1.0
 
-def trouver_colonne_xpo(row, total_palettes):
-    """
-    Les colonnes sont du style:
-      ".01 pal pal-.50 pal pal"
-      ".51 pal pal-1.00 pal pal"
-      "1.01 pal pal-2.00 pal pal"
-    ou bien après ton cleaning:
-      ".01 pal" ".51 pal" "1.01 pal" etc.
-    On gère les deux.
-    """
-    for c in row.index:
-        if not isinstance(c, str):
-            continue
-        if "pal" not in c.lower():
-            continue
+def prix_xpo(df_xpo, departement, palettes, palette_parfaite, constraints):
+    cfg_xpo = constraints.get("XPO", {})
+    if not cfg_xpo.get("enabled", True):
+        return np.nan, "XPO désactivé (config)"
 
-        nums = re.findall(r"[0-9.]+", c.replace(",", "."))
-        if len(nums) >= 2:
-            a = float(nums[0])
-            b = float(nums[1])
-        elif len(nums) == 1:
-            # cas colonnes simplifiées ".01 pal" => on interprète borne basse
-            a = float(nums[0])
-            # borne haute = prochaine colonne - 0.01 ? => on ne peut pas
-            # Donc on ignore ce cas ici
-            continue
-        else:
-            continue
-
-        if a <= total_palettes <= b:
-            return c
-
-    return None
-
-def prix_xpo(df_xpo, departement, palettes, palette_parfaite):
     dep = str(departement).zfill(2)
 
-    if not palette_parfaite:
+    if cfg_xpo.get("palette_parfaite_required", False) and not palette_parfaite:
         return np.nan, "XPO ignoré : palette parfaite obligatoire"
 
-    # Contrôle hauteur + format + poids palette
+    allowed_formats = cfg_xpo.get("allowed_formats_cm", [])
+    max_h = cfg_xpo.get("max_height_cm", 220)
+    max_w_full = cfg_xpo.get("max_weight_full_pallet_kg", 1000)
+
+    # Vérifs palette par palette
     for i, p in enumerate(palettes):
-        if p["H"] > 220:
-            return np.nan, f"XPO ignoré : palette {i+1} hauteur > 220 cm"
-        if not format_ok_xpo(p["L"], p["l"]):
+        if p["H"] > max_h:
+            return np.nan, f"XPO ignoré : palette {i+1} hauteur > {max_h} cm"
+        if not _format_ok(p["L"], p["l"], allowed_formats):
             return np.nan, f"XPO ignoré : palette {i+1} format {p['L']}x{p['l']} non accepté"
-        if p["poids"] > 1000:
-            return np.nan, f"XPO ignoré : palette {i+1} > 1000 kg"
+        if p["poids"] > max_w_full:
+            return np.nan, f"XPO ignoré : palette {i+1} > {max_w_full} kg"
 
-    # Calcul du nombre facturé
-    total_pal = calcul_palettes_facturees_xpo(palettes)
+    total_pal = _palettes_facturees(palettes, cfg_xpo)
 
+    # département présent ?
     r = df_xpo[df_xpo["departement"].astype(str).str.zfill(2) == dep]
     if r.empty:
         return np.nan, "XPO ignoré : département absent"
@@ -440,7 +413,11 @@ def prix_xpo(df_xpo, departement, palettes, palette_parfaite):
 # ============================================================
 
 def compute_prices(departement, palettes, palette_parfaite,
-                   df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa):
+                   df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa,
+                   constraints=None):
+
+    if constraints is None:
+    constraints = load_constraints()
 
     poids_total = sum(p["poids"] for p in palettes)
     poids_palettes = [p["poids"] for p in palettes]
