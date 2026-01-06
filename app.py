@@ -86,7 +86,7 @@ if "palettes" not in st.session_state:
 # -----------------------------------------------------------------------------
 # DEBUG (affiché dans l'UI)
 # -----------------------------------------------------------------------------
-with st.expander("🛠️ Debug / Données chargées", expanded=True):
+with st.expander("🛠️ Debug / Données chargées", expanded=False):
     try:
         # Change la version si tu veux forcer le reload
         df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
