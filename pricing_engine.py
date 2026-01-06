@@ -59,46 +59,44 @@ def appliquer_taxe(prix_base, transporteur, taxes):
 def load_geodis_from_sheet(df_raw):
     df = df_raw.copy()
 
-    headers = df.iloc[9].tolist()
-    data = df.iloc[11:].copy()
+    # On cherche la ligne d'en-tête : celle qui contient "depart" ou "dpt"
+    header_row = None
+    for i in range(min(len(df), 50)):  # on scanne les 50 premières lignes
+        row = df.iloc[i].astype(str).str.lower()
+        joined = " ".join(row.tolist())
+        non_empty = (df.iloc[i].astype(str).str.strip() != "").sum()
+
+        if ("depart" in joined or "dpt" in joined) and non_empty >= 5:
+            header_row = i
+            break
+
+    if header_row is None:
+        raise ValueError("GEODIS: ligne d'en-tête introuvable (departement/dpt non trouvé)")
+
+    headers = df.iloc[header_row].tolist()
+    data = df.iloc[header_row + 1:].copy()
+
     data.columns = headers
     data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+    data = data.dropna(how="all")
 
-    dept_col = data.columns[1]
+    # Trouver la colonne département
+    dept_candidates = [c for c in data.columns if isinstance(c, str) and ("depart" in c.lower() or "dpt" in c.lower())]
+    if dept_candidates:
+        dept_col = dept_candidates[0]
+    else:
+        # sinon on prend la 1ère colonne
+        dept_col = data.columns[0]
+
     data = data.rename(columns={dept_col: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
-    return data
-
-def load_dachser_from_sheet(df_raw):
-    df = df_raw.copy()
-    debuts = df.iloc[3].tolist()
-    fins = df.iloc[4].tolist()
-
-    data = df.iloc[10:].copy()
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
-
-    data = data.rename(columns={data.columns[0]: "departement"})
-    data["departement"] = data["departement"].astype(str).str.zfill(2)
-
-    cols = list(data.columns)
-    col_map = {}
-    for idx in range(1, len(cols)):
-        d = debuts[idx] if idx < len(debuts) else None
-        f = fins[idx] if idx < len(fins) else None
-        if d not in [None, ""] and f not in [None, ""]:
-            col_map[cols[idx]] = f"{d}-{f} kg"
-
-    data = data.rename(columns=col_map)
-
-    for col in data.columns:
-        if col != "departement":
-            data[col] = data[col].apply(to_float)
 
     return data
+
 
 def load_kuehne_from_sheet(df_raw):
     df = df_raw.copy()
