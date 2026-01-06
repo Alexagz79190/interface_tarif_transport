@@ -95,10 +95,6 @@ def _detect_first_data_row(df, start, col=0, max_scan=60):
     return None
 
 def load_geodis_from_sheet(df_raw):
-    """
-    Détecte automatiquement la ligne d'en-tête (tranches kg)
-    puis la colonne département.
-    """
     df = df_raw.copy()
 
     header_row = _detect_header_row(df, keywords=("kg", "à"), min_matches=5)
@@ -117,6 +113,9 @@ def load_geodis_from_sheet(df_raw):
     headers = headers[:data.shape[1]]
     data.columns = headers
 
+    # ✅ FIX : supprimer colonnes dupliquées
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
+
     # Trouver colonne département
     dept_candidates = [
         c for c in data.columns
@@ -130,11 +129,13 @@ def load_geodis_from_sheet(df_raw):
     data = data.rename(columns={dept_col: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
 
+    # supprimer lignes qui n’ont pas de département
+    data = data[data["departement"].notna()].copy()
+
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
-    data = data[data["departement"].notna()]
     return data
 
 def load_dachser_from_sheet(df_raw):
