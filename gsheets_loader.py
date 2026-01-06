@@ -26,6 +26,7 @@ def load_sheet(spreadsheet_id, tab_name):
         )
 
     data = ws.get_all_values()
+    df = pd.DataFrame(data)
     print("✅ SHEET:", ws.title)
     print("✅ shape:", df.shape)
     print("✅ first row:", df.iloc[0].tolist())
