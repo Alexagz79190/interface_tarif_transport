@@ -139,35 +139,47 @@ def load_geodis_from_sheet(df_raw):
     return data
 
 def load_dachser_from_sheet(df_raw):
-    """
-    DACHSER: souvent déjà sous forme '0.1-29.0 kg'
-    On détecte la ligne d'entête avec beaucoup de 'kg'
-    """
     df = df_raw.copy()
 
-    header_row = _detect_header_row(df, keywords=("kg",), min_matches=5)
-    if header_row is None:
-        raise ValueError("DACHSER: ligne entête introuvable.")
+    # 1) détecter la première ligne contenant un département dans la 1ère colonne
+    data_start = None
+    for i in range(min(len(df), 120)):
+        v = str(df.iloc[i, 0]).strip()
+        if re.match(r"^\d{1,2}$", v):  # ex: 06
+            data_start = i
+            break
+
+    if data_start is None:
+        raise ValueError("DACHSER: impossible de trouver les lignes départements (06,07,etc).")
+
+    # 2) Les headers sont en général la ligne juste au-dessus
+    header_row = data_start - 1
+    if header_row < 0:
+        raise ValueError("DACHSER: impossible de déterminer la ligne d'entête.")
 
     headers = df.iloc[header_row].tolist()
-    data_start = _detect_first_data_row(df, header_row + 1, col=0)
-    if data_start is None:
-        data_start = header_row + 1
-
     data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
 
+    # Ajuster la taille des colonnes
     headers = headers[:data.shape[1]]
     data.columns = headers
 
+    # Supprimer colonnes dupliquées
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
+
+    # Renommer première colonne en departement
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].astype(str).str.strip().str.zfill(2)
 
+    # Convertir prix
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
+    # Nettoyage
     data = data[data["departement"].str.match(r"^\d{2}$", na=False)]
+
     return data
 
 def load_kuehne_from_sheet(df_raw):
