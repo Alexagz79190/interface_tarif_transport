@@ -27,18 +27,7 @@ def load_sheet(spreadsheet_id, tab_name):
 
     data = ws.get_all_values()
     df = pd.DataFrame(data)
-    print("✅ SHEET:", ws.title)
-    print("✅ shape:", df.shape)
-    print("✅ first row:", df.iloc[0].tolist())
-    print("✅ first col head:", df.iloc[:20, 0].tolist())
-    print("✅ second col head:", df.iloc[:20, 1].tolist())
-
-
-    # ✅ Debug : onglet réellement chargé
-    nb_lignes = len(data)
-    nb_cols = len(data[0]) if data and len(data) > 0 else 0
-    print(f"✅ Onglet chargé: {ws.title} | nb lignes: {nb_lignes} | nb colonnes: {nb_cols}")
-
+    
     return pd.DataFrame(data)
 
 
