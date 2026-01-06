@@ -3,8 +3,9 @@ import numpy as np
 import math
 import re
 
+# ---------------- UTILS ----------------
 def to_float(x):
-    if pd.isna(x):
+    if x is None:
         return np.nan
     x = str(x).replace("€", "").replace(" ", "").replace(",", ".")
     try:
@@ -16,7 +17,7 @@ def arrondi_10kg(poids):
     return math.ceil(poids / 10) * 10
 
 def extract_dept(x):
-    if pd.isna(x):
+    if x is None:
         return None
     m = re.search(r"(\d{2})", str(x))
     return m.group(1) if m else None
@@ -37,11 +38,16 @@ def parse_range(colname):
     return None
 
 # ---------------- TAXES ----------------
-def load_taxes(path):
-    df = pd.read_csv(path, sep=None, engine="python")
-    df.columns = [c.strip() for c in df.columns]
+def load_taxes_from_sheet(df_raw):
+    # On suppose header ligne 0: Transporteurs / Taux taxe gasoil
+    df = df_raw.copy()
+    df.columns = df.iloc[0]
+    df = df.iloc[1:].copy()
+
+    df.columns = [str(c).strip() for c in df.columns]
     df["Transporteurs"] = df["Transporteurs"].astype(str).str.strip().str.upper()
     df["Taux taxe gasoil"] = df["Taux taxe gasoil"].apply(to_float)
+
     return dict(zip(df["Transporteurs"], df["Taux taxe gasoil"]))
 
 def appliquer_taxe(prix_base, transporteur, taxes):
@@ -50,13 +56,19 @@ def appliquer_taxe(prix_base, transporteur, taxes):
     taux = taxes.get(transporteur.upper(), 0)
     return prix_base * (1 + (taux / 100))
 
-# ---------------- LOADERS ----------------
-def load_geodis(path):
-    df = pd.read_excel(path)
+# ---------------- PARSERS Google Sheets ----------------
+def load_geodis_from_sheet(df_raw):
+    """
+    Reproduction de ton parsing Excel :
+    headers ligne 9
+    data ligne 11+
+    """
+    df = df_raw.copy()
+
     headers = df.iloc[9].tolist()
     data = df.iloc[11:].copy()
     data.columns = headers
-    data = data.loc[:, ~data.columns.duplicated()]
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
 
     dept_col = data.columns[1]
     data = data.rename(columns={dept_col: "departement"})
@@ -65,39 +77,55 @@ def load_geodis(path):
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
+
     return data
 
-def load_dachser(path):
-    df = pd.read_excel(path)
+def load_dachser_from_sheet(df_raw):
+    """
+    debuts ligne 3
+    fins ligne 4
+    data ligne 10+
+    """
+    df = df_raw.copy()
+
     debuts = df.iloc[3].tolist()
     fins = df.iloc[4].tolist()
 
     data = df.iloc[10:].copy()
-    data = data.loc[:, ~data.columns.duplicated()]
-    data = data.rename(columns={df.columns[0]: "departement"})
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+
+    data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].astype(str).str.zfill(2)
 
     col_map = {}
-    for idx in range(1, len(df.columns)):
-        d = debuts[idx]
-        f = fins[idx]
-        if pd.notna(d) and pd.notna(f):
-            col_map[df.columns[idx]] = f"{d}-{f} kg"
+    cols = list(data.columns)
+    # data contient déjà les colonnes d’origine, on mappe par index
+    for idx in range(1, len(cols)):
+        d = debuts[idx] if idx < len(debuts) else None
+        f = fins[idx] if idx < len(fins) else None
+        if d not in [None, ""] and f not in [None, ""]:
+            col_map[cols[idx]] = f"{d}-{f} kg"
 
     data = data.rename(columns=col_map)
-    keep_cols = ["departement"] + list(col_map.values())
-    data = data[keep_cols]
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
+
     return data
 
-def load_kuehne(path):
-    raw = pd.read_csv(path, sep=";", encoding="utf-8", header=None)
-    header1 = raw.iloc[0].tolist()
+def load_kuehne_from_sheet(df_raw):
+    """
+    Reproduction parsing CSV :
+    header1 = ligne 0
+    data = ligne 2+
+    """
+    df = df_raw.copy()
+
+    header1 = df.iloc[0].tolist()
     cols = ["Pays","departement","Destination","Difficulte","Poids_reel"] + header1[5:]
-    data = raw.iloc[2:].copy()
+
+    data = df.iloc[2:].copy()
     data.columns = cols
 
     data["departement"] = data["departement"].astype(str).str.strip()
@@ -107,30 +135,41 @@ def load_kuehne(path):
     for col in data.columns:
         if col not in ["Pays","departement","Destination","Difficulte","Poids_reel"]:
             data[col] = data[col].apply(to_float)
+
     return data
 
-def load_xpo(path):
-    df = pd.read_excel(path)
+def load_xpo_from_sheet(df_raw):
+    """
+    debuts ligne 13
+    fins ligne 14
+    data ligne 18+
+    """
+    df = df_raw.copy()
+
     deb = df.iloc[13].tolist()
     fin = df.iloc[14].tolist()
 
     data = df.iloc[18:].copy()
-    data = data.loc[:, ~data.columns.duplicated()]
-    data = data.rename(columns={df.columns[0]: "departement"})
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+
+    data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
 
+    cols = list(data.columns)
+
     col_map = {}
-    for idx in range(1, 12):
-        if pd.notna(deb[idx]) and pd.notna(fin[idx]):
-            col_map[df.columns[idx]] = f"{deb[idx]} pal-{fin[idx]} pal"
+    for idx in range(1, min(12, len(cols))):
+        d = deb[idx] if idx < len(deb) else None
+        f = fin[idx] if idx < len(fin) else None
+        if d not in [None, ""] and f not in [None, ""]:
+            col_map[cols[idx]] = f"{d} pal-{f} pal"
 
     data = data.rename(columns=col_map)
-    keep_cols = ["departement"] + list(col_map.values())
-    data = data[keep_cols]
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
+
     return data
 
 # ---------------- CALCULS KG ----------------
@@ -186,33 +225,17 @@ def prix_kuehne(df, departement, poids_total):
 
 # ---------------- XPO ----------------
 def calcul_palettes_facturees_xpo(poids_palettes):
-    """
-    Règle XPO :
-    - Si >1 palette : on ignore les demi => palettes facturées = nb palettes physiques
-    - Si 1 palette :
-        <200kg => 0.5
-        >=200kg => 1
-    """
+    # règle validée : demi seulement si 1 palette
     if len(poids_palettes) > 1:
         return float(len(poids_palettes))
-    p = poids_palettes[0]
-    return 0.5 if p < 200 else 1.0
+    return 0.5 if poids_palettes[0] < 200 else 1.0
 
 def trouver_colonne_xpo(row, total_palettes):
-    """
-    Tranches :
-    0.01-0.50 (demi)
-    0.51-1.00 (1)
-    1.01-2.00 (2)
-    2.01-3.00 (3)
-    ...
-    """
     for c in row.index:
         if isinstance(c, str) and "pal" in c.lower():
             nums = re.findall(r"[0-9.]+", c.replace(",", "."))
             if len(nums) >= 2:
                 a = float(nums[0]); b = float(nums[1])
-                # borne basse exclue à partir de 1.01
                 if a >= 1.01:
                     if a < total_palettes <= b:
                         return c
@@ -240,22 +263,15 @@ def prix_xpo(df_xpo, departement, poids_palettes, hauteur_cm, palette_parfaite):
     if col is None:
         return np.nan, f"XPO ignoré : aucune tranche pour {total_pal} palettes"
 
-    return row[col], f"XPO : {total_pal} palette(s) facturée(s), tranche {col}"
+    return row[col], f"XPO : {total_pal} palette(s), tranche {col}"
 
 # ---------------- API PRINCIPALE ----------------
-def compute_prices(departement, palettes, palette_parfaite, paths):
-    """
-    palettes: liste de dicts [{"poids":..., "L":..., "l":..., "H":...}, ...]
-    """
-    df_geodis = load_geodis(paths["GEODIS"])
-    df_dachser = load_dachser(paths["DACHSER"])
-    df_kuehne = load_kuehne(paths["KUEHNE"])
-    df_xpo = load_xpo(paths["XPO"])
-    taxes = load_taxes(paths["TAXE_GO"])
+def compute_prices(departement, palettes, palette_parfaite,
+                   df_geodis, df_dachser, df_kuehne, df_xpo, taxes):
 
     poids_total = sum(p["poids"] for p in palettes)
     poids_palettes = [p["poids"] for p in palettes]
-    hauteur_max = max(p["H"] for p in palettes)  # contrainte XPO
+    hauteur_max = max(p["H"] for p in palettes)
 
     results = []
 
@@ -277,8 +293,10 @@ def compute_prices(departement, palettes, palette_parfaite, paths):
 
     out = []
     for t, base, total, info in results:
-        if pd.notna(total):
-            out.append({"Transporteur": t, "Prix_base": round(float(base), 2), "Prix_taxe": round(float(total), 2), "Info": info})
-        else:
-            out.append({"Transporteur": t, "Prix_base": None, "Prix_taxe": None, "Info": info})
+        out.append({
+            "Transporteur": t,
+            "Prix_base": None if pd.isna(base) else round(float(base), 2),
+            "Prix_taxe": None if pd.isna(total) else round(float(total), 2),
+            "Info": info
+        })
     return out
