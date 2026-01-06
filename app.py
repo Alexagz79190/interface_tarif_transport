@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 
 from gsheets_loader import load_sheet
+from config_loader import load_constraints   # ✅ NEW
 from pricing_engine import (
     load_geodis_from_sheet,
     load_dachser_from_sheet,
@@ -40,6 +41,7 @@ def get_ids_from_secrets():
         "KUEHNE_ID", "KUEHNE_TAB",
         "XPO_ID", "XPO_TAB",
         "TAXE_GO_ID", "TAXE_GO_TAB",
+        "RFA_TAB",
     ]
     missing = [k for k in keys if k not in s]
     if missing:
@@ -48,19 +50,23 @@ def get_ids_from_secrets():
     return {
         "GEODIS_ID": s["GEODIS_ID"],
         "GEODIS_TAB": s["GEODIS_TAB"],
+
         "DACHSER_ID": s["DACHSER_ID"],
         "DACHSER_TAB": s["DACHSER_TAB"],
+
         "KUEHNE_ID": s["KUEHNE_ID"],
         "KUEHNE_TAB": s["KUEHNE_TAB"],
+
         "XPO_ID": s["XPO_ID"],
         "XPO_TAB": s["XPO_TAB"],
+
         "TAXE_ID": s["TAXE_GO_ID"],
         "TAXE_TAB": s["TAXE_GO_TAB"],
         "RFA_TAB": s["RFA_TAB"],
     }
 
 # ---------------------------------------------------------------------
-# Charger toutes les données (cache)
+# Charger toutes les données Google Sheets (cache)
 # ---------------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def load_all_data(version="v1"):
@@ -71,26 +77,42 @@ def load_all_data(version="v1"):
     df_dachser_raw = load_sheet(ids["DACHSER_ID"], ids["DACHSER_TAB"])
     df_kuehne_raw  = load_sheet(ids["KUEHNE_ID"],  ids["KUEHNE_TAB"])
     df_xpo_raw     = load_sheet(ids["XPO_ID"],     ids["XPO_TAB"])
-    df_taxe_raw    = load_sheet(ids["TAXE_ID"],    ids["TAXE_TAB"])
-    df_rfa_raw  = load_sheet(ids["TAXE_ID"], ids["RFA_TAB"])
+
+    # Taxes et RFA viennent du même fichier mais onglets différents
+    df_taxe_raw    = load_sheet(ids["TAXE_ID"], ids["TAXE_TAB"])
+    df_rfa_raw     = load_sheet(ids["TAXE_ID"], ids["RFA_TAB"])
 
     # PARSE
     df_geodis  = load_geodis_from_sheet(df_geodis_raw)
     df_dachser = load_dachser_from_sheet(df_dachser_raw)
     df_kuehne  = load_kuehne_from_sheet(df_kuehne_raw)
     df_xpo     = load_xpo_from_sheet(df_xpo_raw)
-    taxes      = load_taxes_from_sheet(df_taxe_raw)
-    rfa   = load_taxes_from_sheet(df_rfa_raw)
+
+    taxes = load_taxes_from_sheet(df_taxe_raw)  # {GEODIS: 15.19, ...}
+    rfa   = load_taxes_from_sheet(df_rfa_raw)   # {GEODIS: 2.50, ...}
 
     return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids
 
 # ---------------------------------------------------------------------
-# Bouton "forcer rechargement" (uniquement en debug)
+# Charger les contraintes YAML (cache)
 # ---------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def get_constraints(version="v1"):
+    return load_constraints("constraints.yaml")
 
-if st.button("🔄 Forcer rechargement données"):
-    st.cache_data.clear()
-    st.rerun()
+# ---------------------------------------------------------------------
+# Boutons reload (uniquement en debug)
+# ---------------------------------------------------------------------
+if DEBUG:
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("🔄 Forcer rechargement données"):
+            st.cache_data.clear()
+            st.rerun()
+    with colB:
+        if st.button("📄 Recharger constraints.yaml"):
+            st.cache_data.clear()
+            st.rerun()
 
 # ---------------------------------------------------------------------
 # Init session palettes
@@ -99,15 +121,19 @@ if "palettes" not in st.session_state:
     st.session_state.palettes = [{"poids": 100.0, "L": 80.0, "l": 120.0, "H": 100.0}]
 
 # ---------------------------------------------------------------------
-# DEBUG UI (uniquement en debug)
+# Debug caché UI (uniquement en debug)
 # ---------------------------------------------------------------------
 if DEBUG:
     with st.expander("🛠️ Debug / Données chargées", expanded=False):
         try:
-            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
+            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids = load_all_data(version="v9")
+            constraints = get_constraints(version="v1")
 
             st.write("✅ IDs / Onglets utilisés :")
             st.json(ids)
+
+            st.write("✅ Contraintes YAML :")
+            st.json(constraints)
 
             st.write("✅ Résumé chargement :")
             col1, col2, col3, col4 = st.columns(4)
@@ -135,6 +161,9 @@ if DEBUG:
             st.write("✅ Taxes :")
             st.json(taxes)
 
+            st.write("✅ RFA :")
+            st.json(rfa)
+
         except Exception as e:
             st.error(str(e))
             st.stop()
@@ -144,7 +173,7 @@ if DEBUG:
 # ---------------------------------------------------------------------
 st.subheader("📍 Paramètres expédition")
 
-departement = st.text_input("Département (ex : 35)", value="").strip()
+departement = st.text_input("Département (ex : 35)", value="35").strip()
 palette_parfaite = st.checkbox("Palette parfaite (requis XPO)", value=True)
 
 st.write("### Palettes")
@@ -192,6 +221,7 @@ st.divider()
 if st.button("✅ Calculer"):
     try:
         df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids = load_all_data(version="v9")
+        constraints = get_constraints(version="v1")  # ✅ NEW
 
         results = compute_prices(
             departement=departement,
@@ -202,7 +232,8 @@ if st.button("✅ Calculer"):
             df_kuehne=df_kuehne,
             df_xpo=df_xpo,
             taxes=taxes,
-            rfa=rfa
+            rfa=rfa,
+            constraints=constraints
         )
 
         df_res = pd.DataFrame(results)
@@ -217,7 +248,7 @@ if st.button("✅ Calculer"):
             best = valid.iloc[0]
             st.success(f"✅ Transporteur le moins cher : **{best['Transporteur']}** → **{best['Prix_taxe']} €**")
         else:
-            st.warning("⚠️ Faire une demande d'affretement")
+            st.warning("⚠️ Aucun transporteur n’a trouvé de tarif.")
 
     except Exception as e:
         st.error("Erreur pendant le calcul :")
