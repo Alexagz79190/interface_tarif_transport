@@ -20,7 +20,6 @@ def arrondi_10kg(poids):
     return math.ceil(poids / 10) * 10
 
 def extract_dept(x):
-    raise Exception("TEST extract_dept est exécuté ✅")
     if x is None:
         return None
 
