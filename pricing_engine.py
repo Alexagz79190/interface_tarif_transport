@@ -5,7 +5,7 @@ import re
 
 # ---------------- UTILS ----------------
 def to_float(x):
-    if x is None:
+    if x is None or x == "":
         return np.nan
     x = str(x).replace("€", "").replace(" ", "").replace(",", ".")
     try:
@@ -39,7 +39,6 @@ def parse_range(colname):
 
 # ---------------- TAXES ----------------
 def load_taxes_from_sheet(df_raw):
-    # On suppose header ligne 0: Transporteurs / Taux taxe gasoil
     df = df_raw.copy()
     df.columns = df.iloc[0]
     df = df.iloc[1:].copy()
@@ -58,11 +57,6 @@ def appliquer_taxe(prix_base, transporteur, taxes):
 
 # ---------------- PARSERS Google Sheets ----------------
 def load_geodis_from_sheet(df_raw):
-    """
-    Reproduction de ton parsing Excel :
-    headers ligne 9
-    data ligne 11+
-    """
     df = df_raw.copy()
 
     headers = df.iloc[9].tolist()
@@ -77,17 +71,10 @@ def load_geodis_from_sheet(df_raw):
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
-
     return data
 
 def load_dachser_from_sheet(df_raw):
-    """
-    debuts ligne 3
-    fins ligne 4
-    data ligne 10+
-    """
     df = df_raw.copy()
-
     debuts = df.iloc[3].tolist()
     fins = df.iloc[4].tolist()
 
@@ -97,9 +84,8 @@ def load_dachser_from_sheet(df_raw):
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].astype(str).str.zfill(2)
 
-    col_map = {}
     cols = list(data.columns)
-    # data contient déjà les colonnes d’origine, on mappe par index
+    col_map = {}
     for idx in range(1, len(cols)):
         d = debuts[idx] if idx < len(debuts) else None
         f = fins[idx] if idx < len(fins) else None
@@ -115,13 +101,7 @@ def load_dachser_from_sheet(df_raw):
     return data
 
 def load_kuehne_from_sheet(df_raw):
-    """
-    Reproduction parsing CSV :
-    header1 = ligne 0
-    data = ligne 2+
-    """
     df = df_raw.copy()
-
     header1 = df.iloc[0].tolist()
     cols = ["Pays","departement","Destination","Difficulte","Poids_reel"] + header1[5:]
 
@@ -139,24 +119,16 @@ def load_kuehne_from_sheet(df_raw):
     return data
 
 def load_xpo_from_sheet(df_raw):
-    """
-    debuts ligne 13
-    fins ligne 14
-    data ligne 18+
-    """
     df = df_raw.copy()
-
     deb = df.iloc[13].tolist()
     fin = df.iloc[14].tolist()
 
     data = df.iloc[18:].copy()
     data = data.loc[:, ~pd.Index(data.columns).duplicated()]
-
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
 
     cols = list(data.columns)
-
     col_map = {}
     for idx in range(1, min(12, len(cols))):
         d = deb[idx] if idx < len(deb) else None
@@ -225,7 +197,6 @@ def prix_kuehne(df, departement, poids_total):
 
 # ---------------- XPO ----------------
 def calcul_palettes_facturees_xpo(poids_palettes):
-    # règle validée : demi seulement si 1 palette
     if len(poids_palettes) > 1:
         return float(len(poids_palettes))
     return 0.5 if poids_palettes[0] < 200 else 1.0
@@ -275,19 +246,15 @@ def compute_prices(departement, palettes, palette_parfaite,
 
     results = []
 
-    # GEODIS
     base = prix_transporteurs_kg(df_geodis, departement, poids_total)
     results.append(("GEODIS", base, appliquer_taxe(base, "GEODIS", taxes), f"Poids total {poids_total} kg"))
 
-    # DACHSER
     base = prix_transporteurs_kg(df_dachser, departement, poids_total)
     results.append(("DACHSER", base, appliquer_taxe(base, "DACHSER", taxes), f"Poids total {poids_total} kg"))
 
-    # KUEHNE
     base = prix_kuehne(df_kuehne, departement, poids_total)
     results.append(("KUEHNE", base, appliquer_taxe(base, "KUEHNE", taxes), f"Poids total {poids_total} kg"))
 
-    # XPO
     base, info = prix_xpo(df_xpo, departement, poids_palettes, hauteur_max, palette_parfaite)
     results.append(("XPO", base, appliquer_taxe(base, "XPO", taxes), info))
 
