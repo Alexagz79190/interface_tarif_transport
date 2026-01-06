@@ -22,8 +22,25 @@ def arrondi_10kg(poids):
 def extract_dept(x):
     if x is None:
         return None
-    m = re.search(r"(\d{2})", str(x))
-    return m.group(1) if m else None
+
+    # normalisation
+    s = str(x).strip()
+
+    # cas "1.0" ou "35.0"
+    if re.fullmatch(r"\d+\.0", s):
+        s = s.replace(".0", "")
+
+    # cas "1" ou "35"
+    if re.fullmatch(r"\d{1,2}", s):
+        return s.zfill(2)
+
+    # cas "Dpt 35", "35 - truc", "(35)"
+    m = re.search(r"(\d{1,2})", s)
+    if m:
+        return m.group(1).zfill(2)
+
+    return None
+
 
 def parse_range(colname):
     """
