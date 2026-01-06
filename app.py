@@ -58,6 +58,14 @@ if reload_btn:
 with st.spinner("Chargement des tarifs..."):
     df_geodis, df_dachser, df_kuehne, df_xpo, taxes = load_all_data()
 
+st.subheader("DEBUG SOURCES")
+
+st.write("GEODIS_ID:", ids["GEODIS_ID"])
+st.write("GEODIS_TAB:", ids["GEODIS_TAB"])
+st.write("GEODIS nb lignes DF:", len(df_geodis))
+st.write("GEODIS nb départements:", df_geodis["departement"].nunique())
+st.write("GEODIS départements (20):", df_geodis["departement"].astype(str).unique()[:20])
+
 
 DEBUG = True
 
