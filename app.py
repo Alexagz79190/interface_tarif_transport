@@ -56,6 +56,7 @@ def get_ids_from_secrets():
         "XPO_TAB": s["XPO_TAB"],
         "TAXE_ID": s["TAXE_GO_ID"],
         "TAXE_TAB": s["TAXE_GO_TAB"],
+        "RFA_TAB": s["RFA_TAB"],
     }
 
 # ---------------------------------------------------------------------
@@ -71,6 +72,7 @@ def load_all_data(version="v1"):
     df_kuehne_raw  = load_sheet(ids["KUEHNE_ID"],  ids["KUEHNE_TAB"])
     df_xpo_raw     = load_sheet(ids["XPO_ID"],     ids["XPO_TAB"])
     df_taxe_raw    = load_sheet(ids["TAXE_ID"],    ids["TAXE_TAB"])
+    df_rfa_raw  = load_sheet(ids["TAXE_ID"], ids["RFA_TAB"])
 
     # PARSE
     df_geodis  = load_geodis_from_sheet(df_geodis_raw)
@@ -78,8 +80,9 @@ def load_all_data(version="v1"):
     df_kuehne  = load_kuehne_from_sheet(df_kuehne_raw)
     df_xpo     = load_xpo_from_sheet(df_xpo_raw)
     taxes      = load_taxes_from_sheet(df_taxe_raw)
+    rfa   = load_taxes_from_sheet(df_rfa_raw)
 
-    return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids
+    return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids
 
 # ---------------------------------------------------------------------
 # Bouton "forcer rechargement" (uniquement en debug)
@@ -188,7 +191,7 @@ st.divider()
 
 if st.button("✅ Calculer"):
     try:
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
+        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids = load_all_data(version="v9")
 
         results = compute_prices(
             departement=departement,
@@ -198,7 +201,8 @@ if st.button("✅ Calculer"):
             df_dachser=df_dachser,
             df_kuehne=df_kuehne,
             df_xpo=df_xpo,
-            taxes=taxes
+            taxes=taxes,
+            rfa=rfa
         )
 
         df_res = pd.DataFrame(results)
