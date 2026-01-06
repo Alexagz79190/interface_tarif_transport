@@ -58,6 +58,27 @@ if reload_btn:
 with st.spinner("Chargement des tarifs..."):
     df_geodis, df_dachser, df_kuehne, df_xpo, taxes = load_all_data()
 
+
+DEBUG = True
+
+if DEBUG:
+    st.subheader("DEBUG - Données chargées")
+
+    st.write("✅ GEODIS columns:", df_geodis.columns.tolist())
+    st.write("✅ GEODIS départements:", sorted(df_geodis["departement"].dropna().unique())[:30])
+    st.dataframe(df_geodis.head(5))
+
+    st.write("✅ DACHSER columns:", df_dachser.columns.tolist())
+    st.write("✅ DACHSER départements:", sorted(df_dachser["departement"].dropna().unique())[:30])
+    st.dataframe(df_dachser.head(5))
+
+    st.write("✅ XPO columns:", df_xpo.columns.tolist())
+    st.write("✅ XPO départements:", sorted(df_xpo["departement"].dropna().unique())[:30])
+    st.dataframe(df_xpo.head(5))
+
+    st.write("✅ TAXES:", taxes)
+
+
 # ---------------- UI palettes ----------------
 st.subheader("📦 Palettes")
 
