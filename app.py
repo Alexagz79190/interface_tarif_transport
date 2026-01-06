@@ -12,39 +12,44 @@ from pricing_engine import (
 )
 
 st.set_page_config(page_title="Comparateur Transport", layout="wide")
+st.title("📦 Comparateur Tarif Transport")
 
 # -----------------------------------------------------------------------------
-# CONFIG : IDs GOOGLE SHEETS (dans st.secrets)
+# Lire les IDs depuis st.secrets["gsheets"]
 # -----------------------------------------------------------------------------
-# Exemple attendu dans secrets:
-# GEODIS_ID=...
-# GEODIS_TAB=...
-# DACHSER_ID=...
-# DACHSER_TAB=...
-# KUEHNE_ID=...
-# KUEHNE_TAB=...
-# XPO_ID=...
-# XPO_TAB=...
-# TAXE_ID=...
-# TAXE_TAB=...
-
 def get_ids_from_secrets():
+    if "gsheets" not in st.secrets:
+        raise ValueError("Secrets: section [gsheets] introuvable")
+
+    s = st.secrets["gsheets"]
+
     keys = [
         "GEODIS_ID", "GEODIS_TAB",
         "DACHSER_ID", "DACHSER_TAB",
         "KUEHNE_ID", "KUEHNE_TAB",
         "XPO_ID", "XPO_TAB",
-        "TAXE_ID", "TAXE_TAB",
+        "TAXE_GO_ID", "TAXE_GO_TAB",
     ]
-    missing = [k for k in keys if k not in st.secrets]
+    missing = [k for k in keys if k not in s]
     if missing:
-        raise ValueError(f"Secrets manquants : {missing}")
+        raise ValueError(f"Secrets manquants dans [gsheets] : {missing}")
 
-    return {k: st.secrets[k] for k in keys}
+    return {
+        "GEODIS_ID": s["GEODIS_ID"],
+        "GEODIS_TAB": s["GEODIS_TAB"],
+        "DACHSER_ID": s["DACHSER_ID"],
+        "DACHSER_TAB": s["DACHSER_TAB"],
+        "KUEHNE_ID": s["KUEHNE_ID"],
+        "KUEHNE_TAB": s["KUEHNE_TAB"],
+        "XPO_ID": s["XPO_ID"],
+        "XPO_TAB": s["XPO_TAB"],
+        "TAXE_ID": s["TAXE_GO_ID"],
+        "TAXE_TAB": s["TAXE_GO_TAB"],
+    }
 
 
 # -----------------------------------------------------------------------------
-# LOAD ALL DATA (cache)
+# Charger toutes les données (cache)
 # -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def load_all_data(version="v1"):
@@ -68,28 +73,24 @@ def load_all_data(version="v1"):
 
 
 # -----------------------------------------------------------------------------
-# INIT SESSION STATE (palettes)
+# Init session palettes
 # -----------------------------------------------------------------------------
 if "palettes" not in st.session_state:
-    st.session_state.palettes = [
-        {"poids": 100.0, "L": 80.0, "l": 120.0, "H": 100.0}
-    ]
+    st.session_state.palettes = [{"poids": 100.0, "L": 80.0, "l": 120.0, "H": 100.0}]
 
 
 # -----------------------------------------------------------------------------
-# UI
+# DEBUG (affiché dans l'UI)
 # -----------------------------------------------------------------------------
-st.title("📦 Comparateur Tarif Transport")
-
 with st.expander("🛠️ Debug / Données chargées", expanded=True):
     try:
-        # Change version si tu veux forcer le reload
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v7")
+        # Change la version si tu veux forcer le reload
+        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
 
         st.write("✅ IDs / Onglets utilisés :")
         st.json(ids)
 
-        st.write("✅ Résumé des données chargées :")
+        st.write("✅ Résumé chargement :")
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -121,20 +122,15 @@ with st.expander("🛠️ Debug / Données chargées", expanded=True):
 
 
 # -----------------------------------------------------------------------------
-# FORM INPUTS
+# Inputs
 # -----------------------------------------------------------------------------
 st.subheader("📍 Paramètres expédition")
 
 departement = st.text_input("Département (ex : 35)", value="35").strip()
-
-palette_parfaite = st.checkbox(
-    "Palette parfaite (marchandise ne dépasse pas) — requis pour XPO",
-    value=True
-)
+palette_parfaite = st.checkbox("Palette parfaite (requis XPO)", value=True)
 
 st.write("### Palettes")
 
-# affichage palettes dynamiques
 for i, p in enumerate(st.session_state.palettes):
     st.markdown(f"#### Palette {i+1}")
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 0.8])
@@ -154,20 +150,19 @@ for i, p in enumerate(st.session_state.palettes):
                 st.session_state.palettes.pop(i)
                 st.rerun()
 
-# bouton ajouter palette
 if st.button("➕ Ajouter une palette"):
     st.session_state.palettes.append({"poids": 50.0, "L": 80.0, "l": 120.0, "H": 100.0})
     st.rerun()
 
 
 # -----------------------------------------------------------------------------
-# COMPUTE
+# Compute
 # -----------------------------------------------------------------------------
 st.divider()
+
 if st.button("✅ Calculer"):
     try:
-        # reload data
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v7")
+        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
 
         results = compute_prices(
             departement=departement,
@@ -181,26 +176,19 @@ if st.button("✅ Calculer"):
         )
 
         df_res = pd.DataFrame(results)
-
-        # Tri par prix avec taxe
         df_res["Prix_taxe_sort"] = pd.to_numeric(df_res["Prix_taxe"], errors="coerce")
         df_res = df_res.sort_values("Prix_taxe_sort", na_position="last").drop(columns=["Prix_taxe_sort"])
 
         st.subheader("📊 Résultats")
         st.dataframe(df_res, use_container_width=True)
 
-        # meilleur transporteur
         valid = df_res.dropna(subset=["Prix_taxe"])
         if len(valid) > 0:
             best = valid.iloc[0]
             st.success(f"✅ Transporteur le moins cher : **{best['Transporteur']}** → **{best['Prix_taxe']} €**")
         else:
-            st.warning("⚠️ Aucun transporteur n’a trouvé de tarif avec ces paramètres.")
+            st.warning("⚠️ Aucun transporteur n’a trouvé de tarif.")
 
     except Exception as e:
-        # affichage en clair (pas redacted)
         st.error("Erreur pendant le calcul :")
         st.code(str(e))
-
-st.write(st.secrets)
-
