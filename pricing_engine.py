@@ -113,49 +113,23 @@ def _detect_first_data_row(df, start, col=0, max_scan=60):
 
 def load_geodis_from_sheet(df_raw):
     df = df_raw.copy()
+    df.columns = df.iloc[0]
+    df = df.iloc[1:].copy()
 
-    # --- détecter la ligne des tranches (celle qui contient "0 à 4 kg") ---
-    tranche_row = None
-    for i in range(min(len(df), 60)):
-        row = df.iloc[i].astype(str).str.lower()
-        if row.str.contains("kg").sum() >= 5 and row.str.contains("à").sum() >= 5:
-            tranche_row = i
-            break
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()].copy()
+    df = df.dropna(how="all")
 
-    if tranche_row is None:
-        raise ValueError("GEODIS: ligne des tranches introuvable (ex: '0 à 4 kg').")
+    df = df.rename(columns={df.columns[0]: "departement"})
+    df["departement"] = df["departement"].apply(extract_dept)
+    df = df[df["departement"].notna()].copy()
+    df["departement"] = df["departement"].astype(str).str.zfill(2)
 
-    # ligne suivante = "Département de destination"
-    data_start = tranche_row + 2
-
-    # headers poids à partir de la colonne 3
-    headers = df.iloc[tranche_row].tolist()
-
-    # on prend colonne département = 1, et poids = 3+
-    col_dept_idx = 1
-    col_start_poids_idx = 3
-
-    data = df.iloc[data_start:].copy()
-    data = data.dropna(how="all")
-
-    data = data.iloc[:, [col_dept_idx] + list(range(col_start_poids_idx, df.shape[1]))]
-
-    cols = ["departement"] + headers[col_start_poids_idx:col_start_poids_idx + (data.shape[1] - 1)]
-    data.columns = cols
-
-    data["departement"] = data["departement"].apply(extract_dept)
-    data["departement"] = data["departement"].astype(str).str.zfill(2)
-    data.loc[data["departement"] == "No", "departement"] = np.nan
-    data = data[data["departement"].notna()].copy()
-
-    for col in data.columns:
+    for col in df.columns:
         if col != "departement":
-            data[col] = data[col].apply(to_float)
+            df[col] = df[col].apply(to_float)
 
-    # ✅ sécurité: suppression colonnes doublons / vides
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
+    return df
 
-    return data
 
 def load_dachser_from_sheet(df_raw):
     df = df_raw.copy()
