@@ -4,19 +4,19 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 @st.cache_data(show_spinner=False)
-def load_sheet(spreadsheet_id: str, tab_name: str) -> pd.DataFrame:
+def load_sheet(spreadsheet_id, tab_name):
+    creds_dict = st.secrets["gcp_service_account"]
     scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=scopes
-    )
-
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
+
     sh = client.open_by_key(spreadsheet_id)
-    ws = sh.worksheet(tab_name)
 
-    values = ws.get_all_values()
-    df = pd.DataFrame(values)
+    # ✅ STOP si onglet introuvable
+    try:
+        ws = sh.worksheet(tab_name)
+    except Exception as e:
+        raise ValueError(f"❌ Onglet '{tab_name}' introuvable dans le fichier {spreadsheet_id}. Onglets dispo: {[w.title for w in sh.worksheets()]}")
 
-    return df
+    data = ws.get_all_values()
+    return pd.DataFrame(data)
