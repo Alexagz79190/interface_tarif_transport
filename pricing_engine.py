@@ -439,7 +439,7 @@ def compute_prices(departement, palettes, palette_parfaite,
     results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
 
     # XPO
-    base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite)
+    base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, constraints)
     results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
 
 
