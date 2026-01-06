@@ -201,3 +201,6 @@ if st.button("✅ Calculer"):
         # affichage en clair (pas redacted)
         st.error("Erreur pendant le calcul :")
         st.code(str(e))
+
+st.write(st.secrets)
+
