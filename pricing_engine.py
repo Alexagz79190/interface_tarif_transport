@@ -213,19 +213,51 @@ def trouver_prix_100kg(row, poids, rounding_10kg=True):
 def prix_transporteurs_kg(df, departement, poids_total, cfg):
     dep = str(departement).zfill(2)
 
+    split_100 = cfg.get("split_100kg", True)
+    rounding_10kg = cfg.get("rounding_10kg", True)
+
+    # --------------------------------------------------------
+    # ✅ CAS MULTI-TRAJET (ex: DACHSER 20 = 13 + 20)
+    # --------------------------------------------------------
+    multi = cfg.get("multi_trip_dept", {})
+    if dep in multi:
+        total = 0.0
+
+        for d in multi[dep]:
+            d = str(d).zfill(2)
+
+            r = df[df["departement"].astype(str).str.zfill(2) == d]
+            if r.empty:
+                return np.nan
+
+            row = r.iloc[0]
+
+            if split_100 and poids_total > 100:
+                part = trouver_prix_100kg(row, poids_total, rounding_10kg=rounding_10kg)
+            else:
+                part = trouver_prix_forfait(row, poids_total)
+
+            if pd.isna(part):
+                return np.nan
+
+            total += float(part)
+
+        return total
+
+    # --------------------------------------------------------
+    # ✅ CAS NORMAL
+    # --------------------------------------------------------
     r = df[df["departement"].astype(str).str.zfill(2) == dep]
     if r.empty:
         return np.nan
 
     row = r.iloc[0]
 
-    # règles config
-    split_100 = cfg.get("split_100kg", True)
-    rounding_10kg = cfg.get("rounding_10kg", True)
-
     if split_100 and poids_total > 100:
         return trouver_prix_100kg(row, poids_total, rounding_10kg=rounding_10kg)
+
     return trouver_prix_forfait(row, poids_total)
+
 
 
 # ============================================================
