@@ -20,3 +20,6 @@ def load_sheet(spreadsheet_id, tab_name):
 
     data = ws.get_all_values()
     return pd.DataFrame(data)
+
+print(f"✅ Onglet chargé: {ws.title} | nb lignes: {len(data)} | nb colonnes: {len(data[0]) if data else 0}")
+
