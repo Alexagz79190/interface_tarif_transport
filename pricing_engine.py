@@ -210,51 +210,63 @@ def load_kuehne_from_sheet(df_raw):
 def load_xpo_from_sheet(df_raw):
     df = df_raw.copy()
 
-    # trouver les 2 lignes DE / A
-    header_de = None
-    header_a = None
+    # ✅ Nettoyer lignes vides
+    df = df.replace("", np.nan)
+    df = df.dropna(how="all")
+    df = df.reset_index(drop=True)
 
-    for i in range(min(len(df), 80)):
-        if str(df.iloc[i, 0]).strip().upper() == "DE":
+    # 1) Chercher la ligne contenant "DE" en colonne 0
+    header_de = None
+    for i in range(min(len(df), 120)):
+        v = str(df.iloc[i, 0]).strip().upper()
+        if v == "DE":
             header_de = i
-            header_a = i + 1
             break
 
     if header_de is None:
-        raise ValueError("XPO: ligne entête 'DE' introuvable.")
+        # Debug utile si ça ne match pas
+        raise ValueError(
+            f"XPO: ligne entête 'DE' introuvable. "
+            f"Valeurs colonne 0 (20 premières): {df.iloc[:20,0].tolist()}"
+        )
 
+    header_a = header_de + 1
     debuts = df.iloc[header_de].tolist()
     fins = df.iloc[header_a].tolist()
 
-    # trouver début des départements (01 AIN)
+    # 2) Trouver la première ligne où la colonne 0 contient un dept (ex: '01 AIN')
     data_start = None
-    for i in range(header_a + 1, min(len(df), header_a + 60)):
-        if re.match(r"^\d{2}\s", str(df.iloc[i, 0]).strip()):
+    for i in range(header_a + 1, min(len(df), header_a + 120)):
+        val = str(df.iloc[i, 0]).strip()
+        if re.match(r"^\d{2}\s", val):
             data_start = i
             break
 
     if data_start is None:
-        raise ValueError("XPO: impossible de trouver le début des départements (01 AIN).")
+        raise ValueError("XPO: impossible de détecter le début des départements (ex '01 AIN').")
 
     data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
 
-    # nommer la colonne dept
+    # dept
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
+    data = data[data["departement"].notna()]
     data["departement"] = data["departement"].astype(str).str.zfill(2)
-    data.loc[data["departement"] == "No", "departement"] = np.nan
-    data = data[data["departement"].notna()].copy()
 
-    # construire les colonnes "0.01 pal-0.50 pal"
-    col_map = {}
+    # renommer colonnes palettes
     cols = list(data.columns)
+    col_map = {}
 
     for idx in range(1, len(cols)):
         d = debuts[idx] if idx < len(debuts) else None
         f = fins[idx] if idx < len(fins) else None
+
         if d not in [None, ""] and f not in [None, ""]:
-            col_map[cols[idx]] = f"{str(d).replace(',', '.')} pal-{str(f).replace(',', '.')} pal"
+            d = str(d).replace(",", ".").strip()
+            f = str(f).replace(",", ".").strip()
+            col_map[cols[idx]] = f"{d} pal-{f} pal"
 
     data = data.rename(columns=col_map)
 
@@ -262,10 +274,8 @@ def load_xpo_from_sheet(df_raw):
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
-    # sécurité doublons
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
-
     return data
+
 
 # ============================================================
 # CALCUL PRIX PAR TRANCHES (GEODIS / DACHSER)
