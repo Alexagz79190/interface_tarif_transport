@@ -96,6 +96,68 @@ def load_geodis_from_sheet(df_raw):
             data[col] = data[col].apply(to_float)
 
     return data
+def load_dachser_from_sheet(df_raw):
+    """
+    Parsing DACHSER depuis Google Sheets (format brut)
+    Version robuste : détecte la ligne des tranches "kg"
+    puis construit les colonnes sous forme "0.1-29.0 kg", etc.
+    """
+    df = df_raw.copy()
+
+    # 1) Trouver les 2 lignes qui contiennent les bornes de tranches
+    # Dans ton Excel : debuts ligne 3, fins ligne 4
+    # Mais en GSheet ça peut bouger => on détecte
+    debut_row = None
+    fin_row = None
+
+    for i in range(min(len(df), 60)):
+        row = df.iloc[i].astype(str).str.lower()
+        if row.str.contains("kg").sum() >= 5 and row.str.contains("-").sum() >= 5:
+            # ex: "0.1-29.0 kg" si déjà concaténé
+            debut_row = i
+            break
+
+    # Si pas trouvé en "déjà concaténé", on cherche 2 lignes séparées
+    if debut_row is None:
+        for i in range(min(len(df), 60)):
+            row = df.iloc[i].astype(str).str.lower()
+            if row.str.contains("kg").sum() >= 5 and row.str.contains("0").any():
+                debut_row = i
+                fin_row = i + 1
+                break
+    else:
+        # si déjà concaténé, fin_row inutile
+        fin_row = None
+
+    if debut_row is None:
+        raise ValueError("DACHSER: impossible de détecter les lignes de tranches poids.")
+
+    # 2) Déterminer la première ligne de données (départements)
+    # On cherche la première ligne après debut_row où la colonne 0 ressemble à un département
+    data_start = None
+    for i in range(debut_row + 1, min(len(df), debut_row + 30)):
+        val = str(df.iloc[i, 0]).strip()
+        if re.match(r"^\d{1,2}$", val):
+            data_start = i
+            break
+
+    if data_start is None:
+        # fallback : format Excel classique (souvent data à +7)
+        data_start = debut_row + 7
+
+    data = df.iloc[data_start:].copy()
+    data = data.dropna(how="all")
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()]
+
+    # 3) Nommer colonne département
+    data = data.rename(columns={data.columns[0]: "departement"})
+    data["departement"] = data["departement"].astype(str).str.strip().str.zfill(2)
+
+    # 4) Construire les colonnes de tranches
+    cols = list(data.columns)
+
+    if fin_row is None:
+        # Déjà des colonnes style "0.1-29.0 kg" dans la feuille
 
 
 def load_kuehne_from_sheet(df_raw):
