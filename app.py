@@ -18,6 +18,18 @@ from pricing_engine import (
 # ------------------------------
 st.set_page_config(page_title="Comparateur Transport", layout="wide")
 st.title("📦 Comparateur Tarif Transport")
+colA, colB = st.columns(2)
+
+with colA:
+    if st.button("🔄 Actualiser données (tarifs)"):
+        st.cache_data.clear()
+        st.rerun()
+
+with colB:
+    if st.button("🔄 Actualiser contraintes"):
+        st.cache_data.clear()
+        st.rerun()
+
 
 # ------------------------------
 # DEBUG caché via secrets
