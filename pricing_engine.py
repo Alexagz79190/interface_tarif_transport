@@ -97,44 +97,46 @@ def _detect_first_data_row(df, start, col=0, max_scan=60):
 def load_geodis_from_sheet(df_raw):
     df = df_raw.copy()
 
-    header_row = _detect_header_row(df, keywords=("kg", "à"), min_matches=5)
-    if header_row is None:
-        raise ValueError("GEODIS: impossible de détecter la ligne des tranches.")
+    # --- détecter la ligne des tranches (celle qui contient "0 à 4 kg") ---
+    tranche_row = None
+    for i in range(min(len(df), 60)):
+        row = df.iloc[i].astype(str).str.lower()
+        if row.str.contains("kg").sum() >= 5 and row.str.contains("à").sum() >= 5:
+            tranche_row = i
+            break
 
-    headers = df.iloc[header_row].tolist()
-    data_start = _detect_first_data_row(df, header_row + 1, col=0)
-    if data_start is None:
-        data_start = header_row + 1
+    if tranche_row is None:
+        raise ValueError("GEODIS: ligne des tranches introuvable (ex: '0 à 4 kg').")
+
+    # ligne suivante = "Département de destination"
+    data_start = tranche_row + 2
+
+    # headers poids à partir de la colonne 3
+    headers = df.iloc[tranche_row].tolist()
+
+    # on prend colonne département = 1, et poids = 3+
+    col_dept_idx = 1
+    col_start_poids_idx = 3
 
     data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
 
-    # Ajuster taille des headers
-    headers = headers[:data.shape[1]]
-    data.columns = headers
+    data = data.iloc[:, [col_dept_idx] + list(range(col_start_poids_idx, df.shape[1]))]
 
-    # ✅ FIX : supprimer colonnes dupliquées
-    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
+    cols = ["departement"] + headers[col_start_poids_idx:col_start_poids_idx + (data.shape[1] - 1)]
+    data.columns = cols
 
-    # Trouver colonne département
-    dept_candidates = [
-        c for c in data.columns
-        if isinstance(c, str) and ("depart" in c.lower() or "dpt" in c.lower())
-    ]
-    if dept_candidates:
-        dept_col = dept_candidates[0]
-    else:
-        dept_col = data.columns[0]
-
-    data = data.rename(columns={dept_col: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
-
-    # supprimer lignes qui n’ont pas de département
+    data["departement"] = data["departement"].astype(str).str.zfill(2)
+    data.loc[data["departement"] == "No", "departement"] = np.nan
     data = data[data["departement"].notna()].copy()
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
+
+    # ✅ sécurité: suppression colonnes doublons / vides
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
 
     return data
 
@@ -206,45 +208,63 @@ def load_kuehne_from_sheet(df_raw):
     return data
 
 def load_xpo_from_sheet(df_raw):
-    """
-    XPO: colonnes du type:
-    '.01 pal pal-.50 pal pal'
-    '.51 pal pal-1.00 pal pal'
-    '2.01 pal pal-3.00 pal pal'
-    etc.
-    """
     df = df_raw.copy()
 
-    # Détecter header row (celle contenant 'pal')
-    header_row = None
+    # trouver les 2 lignes DE / A
+    header_de = None
+    header_a = None
+
     for i in range(min(len(df), 80)):
-        row = df.iloc[i].astype(str).str.lower()
-        if row.str.contains("pal").sum() >= 5:
-            header_row = i
+        if str(df.iloc[i, 0]).strip().upper() == "DE":
+            header_de = i
+            header_a = i + 1
             break
 
-    if header_row is None:
-        raise ValueError("XPO: ligne entête introuvable.")
+    if header_de is None:
+        raise ValueError("XPO: ligne entête 'DE' introuvable.")
 
-    headers = df.iloc[header_row].tolist()
-    data_start = _detect_first_data_row(df, header_row + 1, col=0)
+    debuts = df.iloc[header_de].tolist()
+    fins = df.iloc[header_a].tolist()
+
+    # trouver début des départements (01 AIN)
+    data_start = None
+    for i in range(header_a + 1, min(len(df), header_a + 60)):
+        if re.match(r"^\d{2}\s", str(df.iloc[i, 0]).strip()):
+            data_start = i
+            break
+
     if data_start is None:
-        data_start = header_row + 1
+        raise ValueError("XPO: impossible de trouver le début des départements (01 AIN).")
 
     data = df.iloc[data_start:].copy()
     data = data.dropna(how="all")
 
-    headers = headers[:data.shape[1]]
-    data.columns = headers
-
+    # nommer la colonne dept
     data = data.rename(columns={data.columns[0]: "departement"})
     data["departement"] = data["departement"].apply(extract_dept)
+    data["departement"] = data["departement"].astype(str).str.zfill(2)
+    data.loc[data["departement"] == "No", "departement"] = np.nan
+    data = data[data["departement"].notna()].copy()
+
+    # construire les colonnes "0.01 pal-0.50 pal"
+    col_map = {}
+    cols = list(data.columns)
+
+    for idx in range(1, len(cols)):
+        d = debuts[idx] if idx < len(debuts) else None
+        f = fins[idx] if idx < len(fins) else None
+        if d not in [None, ""] and f not in [None, ""]:
+            col_map[cols[idx]] = f"{str(d).replace(',', '.')} pal-{str(f).replace(',', '.')} pal"
+
+    data = data.rename(columns=col_map)
 
     for col in data.columns:
         if col != "departement":
             data[col] = data[col].apply(to_float)
 
-    data = data[data["departement"].notna()]
+    # sécurité doublons
+    data = data.loc[:, ~pd.Index(data.columns).duplicated()].copy()
+
     return data
 
 # ============================================================
