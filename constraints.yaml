@@ -1,0 +1,43 @@
+# ------------------------------------------------------------
+# Contraintes transporteurs
+# Modifie ici sans toucher au code
+# ------------------------------------------------------------
+
+GLOBAL:
+  rounding_10kg: true
+
+XPO:
+  enabled: true
+  palette_parfaite_required: true
+
+  # Formats acceptés (cm)
+  allowed_formats_cm:
+    - [80, 120]
+    - [60, 80]
+    - [100, 120]
+
+  # Hauteur maximum (cm)
+  max_height_cm: 220
+
+  # Poids maximum par palette complète (kg)
+  max_weight_full_pallet_kg: 1000
+
+  # Demi palette (si 1 seule palette)
+  half_pallet:
+    enabled: true
+    max_weight_kg: 200
+    only_if_single_palette: true
+
+  # Règle de facturation : si plusieurs palettes => pas de demi palette
+  billing:
+    no_half_when_multiple: true
+
+GEODIS:
+  enabled: true
+
+DACHSER:
+  enabled: true
+
+KUEHNE:
+  enabled: true
+  max_weight_kg: 1500
