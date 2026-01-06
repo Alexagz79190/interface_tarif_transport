@@ -261,7 +261,7 @@ if st.button("✅ Calculer"):
             best = valid.iloc[0]
             st.success(f"✅ Transporteur le moins cher : **{best['Transporteur']}** → **{best['Prix_taxe']} €**")
         else:
-            st.warning("⚠️ Aucun transporteur n’a trouvé de tarif.")
+            st.warning("⚠️ Merci de faire une demande d'affretement.")
 
     except Exception as e:
         st.error("Erreur pendant le calcul :")
