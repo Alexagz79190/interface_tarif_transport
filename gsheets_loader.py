@@ -26,6 +26,12 @@ def load_sheet(spreadsheet_id, tab_name):
         )
 
     data = ws.get_all_values()
+    print("✅ SHEET:", ws.title)
+    print("✅ shape:", df.shape)
+    print("✅ first row:", df.iloc[0].tolist())
+    print("✅ first col head:", df.iloc[:20, 0].tolist())
+    print("✅ second col head:", df.iloc[:20, 1].tolist())
+
 
     # ✅ Debug : onglet réellement chargé
     nb_lignes = len(data)
