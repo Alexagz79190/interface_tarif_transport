@@ -11,6 +11,10 @@ from pricing_engine import (
     compute_prices
 )
 
+if st.button("🔄 Forcer rechargement données"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.set_page_config(page_title="Comparateur Transport", layout="wide")
 st.title("📦 Comparateur Tarif Transport")
 
