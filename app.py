@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 
 from gsheets_loader import load_sheet
-from config_loader import load_constraints   # ✅ NEW
+from config_loader import load_constraints
+
 from pricing_engine import (
     load_geodis_from_sheet,
     load_dachser_from_sheet,
