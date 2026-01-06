@@ -11,16 +11,23 @@ from pricing_engine import (
     compute_prices
 )
 
-if st.button("🔄 Forcer rechargement données"):
-    st.cache_data.clear()
-    st.rerun()
-
+# ------------------------------
+# CONFIG
+# ------------------------------
 st.set_page_config(page_title="Comparateur Transport", layout="wide")
 st.title("📦 Comparateur Tarif Transport")
 
-# -----------------------------------------------------------------------------
+# ------------------------------
+# DEBUG caché via secrets
+# Dans Streamlit secrets :
+# [app]
+# DEBUG = true
+# ------------------------------
+DEBUG = st.secrets.get("app", {}).get("DEBUG", False)
+
+# ---------------------------------------------------------------------
 # Lire les IDs depuis st.secrets["gsheets"]
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 def get_ids_from_secrets():
     if "gsheets" not in st.secrets:
         raise ValueError("Secrets: section [gsheets] introuvable")
@@ -51,10 +58,9 @@ def get_ids_from_secrets():
         "TAXE_TAB": s["TAXE_GO_TAB"],
     }
 
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Charger toutes les données (cache)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def load_all_data(version="v1"):
     ids = get_ids_from_secrets()
@@ -75,21 +81,25 @@ def load_all_data(version="v1"):
 
     return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids
 
+# ---------------------------------------------------------------------
+# Bouton "forcer rechargement" (uniquement en debug)
+# ---------------------------------------------------------------------
+if DEBUG:
+    if st.button("🔄 Forcer rechargement données"):
+        st.cache_data.clear()
+        st.rerun()
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Init session palettes
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 if "palettes" not in st.session_state:
     st.session_state.palettes = [{"poids": 100.0, "L": 80.0, "l": 120.0, "H": 100.0}]
 
-
-# -----------------------------------------------------------------------------
-# DEBUG (affiché dans l'UI)
-# -----------------------------------------------------------------------------
-DEBUG = st.checkbox("🛠️ Activer le mode debug", value=False)
-
+# ---------------------------------------------------------------------
+# DEBUG UI (uniquement en debug)
+# ---------------------------------------------------------------------
 if DEBUG:
-    with st.expander("🛠️ Debug / Données chargées", expanded=True):
+    with st.expander("🛠️ Debug / Données chargées", expanded=False):
         try:
             df_geodis, df_dachser, df_kuehne, df_xpo, taxes, ids = load_all_data(version="v9")
 
@@ -125,9 +135,10 @@ if DEBUG:
         except Exception as e:
             st.error(str(e))
             st.stop()
-# -----------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Inputs
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 st.subheader("📍 Paramètres expédition")
 
 departement = st.text_input("Département (ex : 35)", value="35").strip()
@@ -140,13 +151,25 @@ for i, p in enumerate(st.session_state.palettes):
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 0.8])
 
     with c1:
-        p["poids"] = st.number_input(f"Poids (kg) {i+1}", min_value=0.0, value=float(p["poids"]), step=1.0, key=f"poids_{i}")
+        p["poids"] = st.number_input(
+            f"Poids (kg) {i+1}", min_value=0.0, value=float(p["poids"]),
+            step=1.0, key=f"poids_{i}"
+        )
     with c2:
-        p["L"] = st.number_input(f"Longueur (cm) {i+1}", min_value=0.0, value=float(p["L"]), step=1.0, key=f"L_{i}")
+        p["L"] = st.number_input(
+            f"Longueur (cm) {i+1}", min_value=0.0, value=float(p["L"]),
+            step=1.0, key=f"L_{i}"
+        )
     with c3:
-        p["l"] = st.number_input(f"Largeur (cm) {i+1}", min_value=0.0, value=float(p["l"]), step=1.0, key=f"l_{i}")
+        p["l"] = st.number_input(
+            f"Largeur (cm) {i+1}", min_value=0.0, value=float(p["l"]),
+            step=1.0, key=f"l_{i}"
+        )
     with c4:
-        p["H"] = st.number_input(f"Hauteur (cm) {i+1}", min_value=0.0, value=float(p["H"]), step=1.0, key=f"H_{i}")
+        p["H"] = st.number_input(
+            f"Hauteur (cm) {i+1}", min_value=0.0, value=float(p["H"]),
+            step=1.0, key=f"H_{i}"
+        )
 
     with c5:
         if len(st.session_state.palettes) > 1:
@@ -158,10 +181,9 @@ if st.button("➕ Ajouter une palette"):
     st.session_state.palettes.append({"poids": 50.0, "L": 80.0, "l": 120.0, "H": 100.0})
     st.rerun()
 
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Compute
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 st.divider()
 
 if st.button("✅ Calculer"):
