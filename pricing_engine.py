@@ -309,19 +309,29 @@ def prix_kuehne(df, departement, poids_total):
     r = df[df["departement"] == dep]
     if r.empty:
         return np.nan
-    row = r.iloc[0]
 
+    row = r.iloc[0]
     seuils = sorted([int(c) for c in row.index if str(c).isdigit()])
 
+    if not seuils:
+        return np.nan
+
+    seuil_max = max(seuils)
+
+    # ✅ Si au-dessus du max, pas de tarif
+    if poids_total > seuil_max:
+        return np.nan
+
+    # ✅ Forfait jusqu'à 100 kg
     if poids_total <= 100:
         seuil = next((s for s in seuils if poids_total <= s), None)
         if seuil is None:
             return np.nan
         return row[str(seuil)]
 
+    # ✅ Au-delà de 100 : prix au 100kg arrondi à 10kg
     poids_arr = arrondi_10kg(poids_total)
 
-    # on prend la dernière colonne <= poids_total
     seuil = max([s for s in seuils if s <= poids_total], default=None)
     if seuil is None:
         return np.nan
