@@ -434,50 +434,101 @@ def compute_prices(
 
     results = []
 
-    # ---------------- GEODIS
-    ok, reason = check_limits("GEODIS", palettes, cfg_geodis)
-    if not ok:
+    # ============================================================
+    # GEODIS
+    # ============================================================
+    if not cfg_geodis.get("enabled", True):
         base = np.nan
-        info = reason
+        info = "GEODIS désactivé"
     else:
-        base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
-        info = f"Poids total {poids_total} kg"
+        ok, reason = check_limits("GEODIS", palettes, cfg_geodis)
+        if not ok:
+            base = np.nan
+            info = reason
+        else:
+            base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
+            info = f"Poids total {poids_total} kg"
 
-    results.append(("GEODIS", base, appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa), info))
+    results.append((
+        "GEODIS",
+        base,
+        appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa),
+        info
+    ))
 
-    # ---------------- DACHSER
-    ok, reason = check_limits("DACHSER", palettes, cfg_dachser)
-    if not ok:
+    # ============================================================
+    # DACHSER
+    # ============================================================
+    if not cfg_dachser.get("enabled", True):
         base = np.nan
-        info = reason
+        info = "DACHSER désactivé"
     else:
-        base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
-        info = f"Poids total {poids_total} kg"
+        ok, reason = check_limits("DACHSER", palettes, cfg_dachser)
+        if not ok:
+            base = np.nan
+            info = reason
+        else:
+            base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
 
-    results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), info))
+            fixed_fee = cfg_dachser.get("fixed_fee_eur", 0) or 0
+            if not pd.isna(base):
+                base = base + fixed_fee
 
-    # ---------------- KUEHNE
-    ok, reason = check_limits("KUEHNE", palettes, cfg_kuehne)
-    if not ok:
+            info = f"Poids total {poids_total} kg + forfait {fixed_fee}€"
+
+    results.append((
+        "DACHSER",
+        base,
+        appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa),
+        info
+    ))
+
+    # ============================================================
+    # KUEHNE
+    # ============================================================
+    if not cfg_kuehne.get("enabled", True):
         base = np.nan
-        info = reason
+        info = "KUEHNE désactivé"
     else:
-        base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
-        info = f"Poids total {poids_total} kg"
+        ok, reason = check_limits("KUEHNE", palettes, cfg_kuehne)
+        if not ok:
+            base = np.nan
+            info = reason
+        else:
+            base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
+            info = f"Poids total {poids_total} kg"
 
-    results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), info))
+    results.append((
+        "KUEHNE",
+        base,
+        appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa),
+        info
+    ))
 
-    # ---------------- XPO
-    ok, reason = check_limits("XPO", palettes, cfg_xpo)
-    if not ok:
+    # ============================================================
+    # XPO
+    # ============================================================
+    if not cfg_xpo.get("enabled", True):
         base = np.nan
-        info = reason
+        info = "XPO désactivé"
     else:
-        base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
+        ok, reason = check_limits("XPO", palettes, cfg_xpo)
+        if not ok:
+            base = np.nan
+            info = reason
+        else:
+            base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
 
-    results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
+    results.append((
+        "XPO",
+        base,
+        appliquer_taxe_et_rfa(base, "XPO", taxes, rfa),
+        info
+    ))
 
-    # sortie
+    # ============================================================
+    # FORMAT OUTPUT
+    # ============================================================
     out = []
     for t, base, total, info in results:
         out.append({
