@@ -28,15 +28,15 @@ def extract_dept(x):
 
     s = str(x).strip()
 
-    # cas "35.0"
+    # cas 35.0
     if re.fullmatch(r"\d+\.0", s):
         s = s.replace(".0", "")
 
-    # cas "35"
+    # cas 35
     if re.fullmatch(r"\d{1,2}", s):
         return s.zfill(2)
 
-    # cas "Dpt 35", "(35)", "35 - XXX"
+    # cas Dpt 35 / (35) / 35 - XXX
     m = re.search(r"(\d{1,2})", s)
     if m:
         return m.group(1).zfill(2)
@@ -46,11 +46,8 @@ def extract_dept(x):
 
 def parse_range(colname):
     """
-    Parse des colonnes du type :
-    - '0 à 4 kg'
-    - '0.1-29.0 kg'
-    - '1-29 kg'
-    Renvoie (min,max) ou None
+    Parse une colonne du type '0 à 4 kg', '0.1-29.0 kg', '100-199 kg'
+    => (min,max)
     """
     if not isinstance(colname, str):
         return None
@@ -67,71 +64,31 @@ def parse_range(colname):
 
     return None
 
-def check_limits(palettes, poids_total, cfg, transporteur):
-    limits = cfg.get("limits", {})
-    if not limits:
-        return True, None
-
-    # ------------------------
-    # Poids total (si défini)
-    # ------------------------
-    max_total = limits.get("max_weight_total_kg")
-    if max_total is not None and poids_total > max_total:
-        return False, f"{transporteur} ignoré : poids total > {max_total} kg"
-
-    # ------------------------
-    # Poids par palette (si défini)
-    # ------------------------
-    max_per = limits.get("max_weight_per_pallet_kg")
-    if max_per is not None:
-        for i, p in enumerate(palettes):
-            if p["poids"] > max_per:
-                return False, f"{transporteur} ignoré : palette {i+1} > {max_per} kg"
-
-    # ------------------------
-    # Dimensions (max sur toutes palettes)
-    # ------------------------
-    max_L = max(p["L"] for p in palettes) / 100.0  # cm -> m
-    max_l = max(p["l"] for p in palettes) / 100.0
-    max_H = max(p["H"] for p in palettes) / 100.0
-
-    if limits.get("max_length_m") is not None and max_L > limits["max_length_m"]:
-        return False, f"{transporteur} ignoré : longueur > {limits['max_length_m']} m"
-
-    if limits.get("max_width_m") is not None and max_l > limits["max_width_m"]:
-        return False, f"{transporteur} ignoré : largeur > {limits['max_width_m']} m"
-
-    if limits.get("max_height_m") is not None and max_H > limits["max_height_m"]:
-        return False, f"{transporteur} ignoré : hauteur > {limits['max_height_m']} m"
-
-    return True, None
 
 # ============================================================
-# TAXE + RFA
+# TAXES / RFA
 # ============================================================
 
 def load_taxes_from_sheet(df_raw):
     """
-    df_raw contient déjà l'onglet chargé (taxe_go ou rfa).
-    Format attendu :
-      Transporteurs | Taux taxe gasoil
+    Feuille type :
+    Transporteurs | Taux taxe gasoil
     OU
-      Transporteurs | Taux RFA
+    Transporteurs | Taux RFA
     """
     df = df_raw.copy()
     df.columns = df.iloc[0]
     df = df.iloc[1:].copy()
-
     df.columns = [str(c).strip() for c in df.columns]
 
     if "Transporteurs" not in df.columns:
-        raise ValueError("TAXES: colonne 'Transporteurs' introuvable")
+        raise ValueError("TAXES/RFA: colonne 'Transporteurs' introuvable")
 
     df["Transporteurs"] = df["Transporteurs"].astype(str).str.strip().str.upper()
 
     value_col = [c for c in df.columns if "taux" in c.lower()]
     if not value_col:
-        raise ValueError("TAXES: aucune colonne 'taux' trouvée")
+        raise ValueError("TAXES/RFA: aucune colonne contenant 'taux' trouvée")
     value_col = value_col[0]
 
     df[value_col] = df[value_col].apply(to_float)
@@ -150,10 +107,10 @@ def appliquer_taxe_et_rfa(prix_base, transporteur, taxes, rfa):
 
 
 # ============================================================
-# PARSERS GOOGLE SHEETS (DONNÉES CLEAN)
+# PARSERS GOOGLE SHEETS (données propres)
 # ============================================================
 
-def _basic_clean(df_raw):
+def _clean_df_first_row_as_header(df_raw):
     df = df_raw.copy()
     df.columns = df.iloc[0]
     df = df.iloc[1:].copy()
@@ -164,7 +121,7 @@ def _basic_clean(df_raw):
 
 
 def load_geodis_from_sheet(df_raw):
-    df = _basic_clean(df_raw)
+    df = _clean_df_first_row_as_header(df_raw)
 
     df = df.rename(columns={df.columns[0]: "departement"})
     df["departement"] = df["departement"].apply(extract_dept)
@@ -179,7 +136,7 @@ def load_geodis_from_sheet(df_raw):
 
 
 def load_dachser_from_sheet(df_raw):
-    df = _basic_clean(df_raw)
+    df = _clean_df_first_row_as_header(df_raw)
 
     df = df.rename(columns={df.columns[0]: "departement"})
     df["departement"] = df["departement"].apply(extract_dept)
@@ -195,36 +152,36 @@ def load_dachser_from_sheet(df_raw):
 
 def load_kuehne_from_sheet(df_raw):
     """
-    Format CLEAN attendu :
-      departement | 1-29 kg | 30-39 kg | ...
+    KUEHNE CLEAN attendu :
+    - 1ere ligne = headers
+    - colonnes poids = "1-29 kg", "30-39 kg", etc.
     """
-    df = _basic_clean(df_raw)
+    df = _clean_df_first_row_as_header(df_raw)
 
-    # détecter colonne departement
-    dept_col = None
+    # trouver la colonne departement
+    dep_col = None
     for c in df.columns:
         if str(c).strip().lower() == "departement":
-            dept_col = c
+            dep_col = c
             break
+    if dep_col is None:
+        dep_col = df.columns[1]  # fallback
 
-    if dept_col is None:
-        dept_col = df.columns[1]  # fallback
-
-    df = df.rename(columns={dept_col: "departement"})
+    df = df.rename(columns={dep_col: "departement"})
     df["departement"] = df["departement"].apply(extract_dept)
     df = df[df["departement"].notna()].copy()
     df["departement"] = df["departement"].astype(str).str.zfill(2)
 
-    # conversion float seulement colonnes ranges
     for col in df.columns:
-        if col != "departement" and parse_range(col):
-            df[col] = df[col].apply(to_float)
+        if col != "departement":
+            if parse_range(col):
+                df[col] = df[col].apply(to_float)
 
     return df
 
 
 def load_xpo_from_sheet(df_raw):
-    df = _basic_clean(df_raw)
+    df = _clean_df_first_row_as_header(df_raw)
 
     if df.columns[0].lower() != "departement":
         df = df.rename(columns={df.columns[0]: "departement"})
@@ -241,14 +198,47 @@ def load_xpo_from_sheet(df_raw):
 
 
 # ============================================================
-# CALCUL PRIX TRANCHES KG (GEODIS / DACHSER / KUEHNE)
+# CONTRAINTES (POIDS / DIMENSIONS)
+# ============================================================
+
+def check_limits(palettes, cfg, transporteur):
+    limits = cfg.get("limits", {})
+
+    max_total = limits.get("max_weight_total_kg")
+    max_per = limits.get("max_weight_per_pallet_kg")
+    max_L = limits.get("max_length_m")
+    max_l = limits.get("max_width_m")
+    max_H = limits.get("max_height_m")
+
+    poids_total = sum(p["poids"] for p in palettes)
+
+    # poids total
+    if max_total is not None and poids_total > max_total:
+        return False, f"{transporteur} ignoré : poids total > {max_total} kg"
+
+    # poids par palette
+    if max_per is not None:
+        for i, p in enumerate(palettes):
+            if p["poids"] > max_per:
+                return False, f"{transporteur} ignoré : palette {i+1} > {max_per} kg"
+
+    # dimensions
+    for i, p in enumerate(palettes):
+        if max_L is not None and p["L"] > max_L * 100:
+            return False, f"{transporteur} ignoré : palette {i+1} longueur > {max_L} m"
+        if max_l is not None and p["l"] > max_l * 100:
+            return False, f"{transporteur} ignoré : palette {i+1} largeur > {max_l} m"
+        if max_H is not None and p["H"] > max_H * 100:
+            return False, f"{transporteur} ignoré : palette {i+1} hauteur > {max_H} m"
+
+    return True, "OK"
+
+
+# ============================================================
+# PRIX TRANCHES KG
 # ============================================================
 
 def trouver_prix_tranche(row, poids):
-    """
-    Va chercher la colonne dont la tranche contient le poids.
-    Exemple: poids 85 => tranche 80-89 => prix direct
-    """
     for col in row.index:
         r = parse_range(col)
         if r:
@@ -258,73 +248,31 @@ def trouver_prix_tranche(row, poids):
     return np.nan
 
 
-def trouver_prix_tranche_100kg(row, poids, rounding_10kg=True):
-    """
-    Cas où la colonne contient un prix pour 100 kg (ou équivalent)
-    -> extrapole en * (poids_arrondi/100)
-    """
-    poids_arr = arrondi_10kg(poids) if rounding_10kg else poids
-
-    for col in row.index:
-        r = parse_range(col)
-        if r:
-            a, b = r
-            if a <= poids <= b:
-                prix_100 = row[col]
-                return prix_100 * (poids_arr / 100)
-
-    return np.nan
-
-
-def prix_transporteurs_kg(df, departement, poids_total, cfg=None):
-    """
-    Calcul standard pour GEODIS / DACHSER / KUEHNE sur tranches kg.
-    cfg optionnel (contraintes YAML).
-    """
-    if cfg is None:
-        cfg = {}
-
+def prix_transporteurs_kg(df, departement, poids_total, cfg):
     dep = str(departement).zfill(2)
 
-    split_100 = cfg.get("split_100kg", True)
-    rounding_10kg = cfg.get("rounding_10kg", True)
-
-    # ---- multi trajets : ex DACHSER 20 = 13 + 20
+    # multi-trip
     multi = cfg.get("multi_trip_dept", {})
     if dep in multi:
         total = 0.0
         for d in multi[dep]:
             d = str(d).zfill(2)
-
             r = df[df["departement"].astype(str).str.zfill(2) == d]
             if r.empty:
                 return np.nan
-
             row = r.iloc[0]
-
-            part = (
-                trouver_prix_tranche_100kg(row, poids_total, rounding_10kg)
-                if split_100 and poids_total > 100
-                else trouver_prix_tranche(row, poids_total)
-            )
-
+            part = trouver_prix_tranche(row, poids_total)
             if pd.isna(part):
                 return np.nan
-
             total += float(part)
-
         return total
 
-    # ---- normal
+    # normal
     r = df[df["departement"].astype(str).str.zfill(2) == dep]
     if r.empty:
         return np.nan
 
     row = r.iloc[0]
-
-    if split_100 and poids_total > 100:
-        return trouver_prix_tranche_100kg(row, poids_total, rounding_10kg)
-
     return trouver_prix_tranche(row, poids_total)
 
 
@@ -346,29 +294,21 @@ def _is_half_pallet(p, cfg):
 
 
 def _palettes_facturees(palettes, cfg):
-    # plusieurs palettes => pas de demi
     if len(palettes) > 1 and cfg.get("billing", {}).get("no_half_when_multiple", True):
         return float(len(palettes))
 
-    # une seule palette
     p = palettes[0]
     if _is_half_pallet(p, cfg) and cfg.get("half_pallet", {}).get("only_if_single_palette", True):
         return 0.5
-
     return 1.0
 
 
 def trouver_colonne_xpo(row, total_palettes):
-    """
-    Support :
-     - colonnes ".01 pal", ".51 pal", "1.01 pal", "2.01 pal", ...
-     - colonnes "0.01 pal-0.50 pal"
-    """
     cols = [c for c in row.index if isinstance(c, str) and "pal" in c.lower()]
     if not cols:
         return None
 
-    # cas format "0.01-0.50"
+    # cas colonnes concaténées "0.01 pal-0.50 pal"
     for c in cols:
         nums = re.findall(r"[0-9.]+", c.replace(",", "."))
         if len(nums) >= 2:
@@ -376,46 +316,41 @@ def trouver_colonne_xpo(row, total_palettes):
             if a <= total_palettes <= b:
                 return c
 
-    # cas format ".01 pal"
+    # cas colonnes simples "2.01 pal"
     values = []
     for c in cols:
         nums = re.findall(r"[0-9.]+", c.replace(",", "."))
         if nums:
             values.append((float(nums[0]), c))
-
     values = sorted(values, key=lambda x: x[0])
 
     for i in range(len(values)):
         start, col = values[i]
-        end = values[i+1][0] if i+1 < len(values) else start + 1
+        end = values[i + 1][0] if i + 1 < len(values) else start + 1
         if start <= total_palettes < end:
             return col
 
     return None
 
 
-def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg=None):
-    if cfg is None:
-        cfg = {}
-
-    dep = str(departement).zfill(2)
-
+def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg):
     if not cfg.get("enabled", True):
         return np.nan, "XPO désactivé"
+
+    dep = str(departement).zfill(2)
 
     if cfg.get("palette_parfaite_required", True) and not palette_parfaite:
         return np.nan, "XPO ignoré : palette parfaite obligatoire"
 
-    max_h = cfg.get("max_height_cm", 220)
-    max_w_full = cfg.get("max_weight_full_pallet_kg", 1000)
     allowed_formats = cfg.get("allowed_formats_cm", [])
+    max_h = cfg.get("max_height_cm", 220)
+    max_w = cfg.get("max_weight_full_pallet_kg", 1000)
 
-    # vérifs par palette
     for i, p in enumerate(palettes):
         if p["H"] > max_h:
             return np.nan, f"XPO ignoré : palette {i+1} hauteur > {max_h} cm"
-        if p["poids"] > max_w_full:
-            return np.nan, f"XPO ignoré : palette {i+1} > {max_w_full} kg"
+        if p["poids"] > max_w:
+            return np.nan, f"XPO ignoré : palette {i+1} > {max_w} kg"
         if allowed_formats and not _format_ok(p["L"], p["l"], allowed_formats):
             return np.nan, f"XPO ignoré : palette {i+1} format {p['L']}x{p['l']} non accepté"
 
@@ -427,7 +362,6 @@ def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg=None):
 
     row = r.iloc[0]
     col = trouver_colonne_xpo(row, total_pal)
-
     if col is None:
         return np.nan, f"XPO ignoré : aucune tranche pour {total_pal} palette(s)"
 
@@ -462,7 +396,7 @@ def compute_prices(
 
     results = []
 
-    # ---------------- GEODIS ----------------
+    # ---------------- GEODIS
     ok, msg = check_limits(palettes, cfg_geodis, "GEODIS")
     if not ok:
         results.append(("GEODIS", np.nan, np.nan, msg))
@@ -470,7 +404,7 @@ def compute_prices(
         base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
         results.append(("GEODIS", base, appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # ---------------- DACHSER ----------------
+    # ---------------- DACHSER
     ok, msg = check_limits(palettes, cfg_dachser, "DACHSER")
     if not ok:
         results.append(("DACHSER", np.nan, np.nan, msg))
@@ -478,7 +412,7 @@ def compute_prices(
         base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
         results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # ---------------- KUEHNE ----------------
+    # ---------------- KUEHNE
     ok, msg = check_limits(palettes, cfg_kuehne, "KUEHNE")
     if not ok:
         results.append(("KUEHNE", np.nan, np.nan, msg))
@@ -486,7 +420,7 @@ def compute_prices(
         base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
         results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # ---------------- XPO ----------------
+    # ---------------- XPO
     ok, msg = check_limits(palettes, cfg_xpo, "XPO")
     if not ok:
         results.append(("XPO", np.nan, np.nan, msg))
@@ -494,7 +428,6 @@ def compute_prices(
         base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
         results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
 
-    # ---------------- FORMAT OUTPUT ----------------
     out = []
     for t, base, total, info in results:
         out.append({
