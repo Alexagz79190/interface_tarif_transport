@@ -524,6 +524,13 @@ def compute_prices(
                 base = base + fixed_fee
                 info = f"{info} + forfait {fixed_fee}€"
 
+        results.append((
+        "XPO",
+        base,
+        appliquer_taxe_et_rfa(base, "XPO", taxes, rfa),
+        info
+    ))
+
     # ============================================================
     # FORMAT OUTPUT
     # ============================================================
