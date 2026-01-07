@@ -67,6 +67,44 @@ def parse_range(colname):
 
     return None
 
+def check_limits(palettes, poids_total, cfg, transporteur):
+    limits = cfg.get("limits", {})
+    if not limits:
+        return True, None
+
+    # ------------------------
+    # Poids total (si défini)
+    # ------------------------
+    max_total = limits.get("max_weight_total_kg")
+    if max_total is not None and poids_total > max_total:
+        return False, f"{transporteur} ignoré : poids total > {max_total} kg"
+
+    # ------------------------
+    # Poids par palette (si défini)
+    # ------------------------
+    max_per = limits.get("max_weight_per_pallet_kg")
+    if max_per is not None:
+        for i, p in enumerate(palettes):
+            if p["poids"] > max_per:
+                return False, f"{transporteur} ignoré : palette {i+1} > {max_per} kg"
+
+    # ------------------------
+    # Dimensions (max sur toutes palettes)
+    # ------------------------
+    max_L = max(p["L"] for p in palettes) / 100.0  # cm -> m
+    max_l = max(p["l"] for p in palettes) / 100.0
+    max_H = max(p["H"] for p in palettes) / 100.0
+
+    if limits.get("max_length_m") is not None and max_L > limits["max_length_m"]:
+        return False, f"{transporteur} ignoré : longueur > {limits['max_length_m']} m"
+
+    if limits.get("max_width_m") is not None and max_l > limits["max_width_m"]:
+        return False, f"{transporteur} ignoré : largeur > {limits['max_width_m']} m"
+
+    if limits.get("max_height_m") is not None and max_H > limits["max_height_m"]:
+        return False, f"{transporteur} ignoré : hauteur > {limits['max_height_m']} m"
+
+    return True, None
 
 # ============================================================
 # TAXE + RFA
