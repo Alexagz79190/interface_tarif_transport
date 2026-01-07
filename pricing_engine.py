@@ -144,24 +144,43 @@ def load_dachser_from_sheet(df_raw):
     return df
 
 def load_kuehne_from_sheet(df_raw):
+    """
+    Format CLEAN attendu :
+    - 1ère ligne = headers (Pays, departement, ..., "1-29 kg", "30-39 kg", etc.)
+    - les colonnes poids sont déjà concaténées => utilisables avec parse_range()
+    """
     df = df_raw.copy()
 
-    header1 = df.iloc[0].tolist()
-    cols = ["Pays", "departement", "Destination", "Difficulte", "Poids_reel"] + header1[5:]
+    # 1) Première ligne = header
+    df.columns = df.iloc[0]
+    df = df.iloc[1:].copy()
 
-    data = df.iloc[2:].copy()
-    data.columns = cols
-    data = data.dropna(how="all")
+    # 2) Nettoyage colonnes
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()].copy()
+    df = df.dropna(how="all")
 
-    data["departement"] = data["departement"].astype(str).str.strip()
-    data = data[data["departement"].str.match(r"^\d{1,2}$", na=False)]
-    data["departement"] = data["departement"].str.zfill(2)
+    # 3) Vérif département
+    if "departement" not in [c.lower() for c in df.columns]:
+        # on suppose que la 2e colonne est le departement
+        df = df.rename(columns={df.columns[1]: "departement"})
+    else:
+        # renommer exactement en departement
+        for c in df.columns:
+            if str(c).strip().lower() == "departement":
+                df = df.rename(columns={c: "departement"})
 
-    for col in data.columns:
-        if col not in ["Pays", "departement", "Destination", "Difficulte", "Poids_reel"]:
-            data[col] = data[col].apply(to_float)
+    df["departement"] = df["departement"].apply(extract_dept)
+    df = df[df["departement"].notna()].copy()
+    df["departement"] = df["departement"].astype(str).str.zfill(2)
 
-    return data
+    # 4) Conversion float sur colonnes poids uniquement
+    for col in df.columns:
+        if col != "departement":
+            if parse_range(col):   # ✅ uniquement colonnes "a-b kg"
+                df[col] = df[col].apply(to_float)
+
+    return df
 
 def load_xpo_from_sheet(df_raw):
     df = df_raw.copy()
