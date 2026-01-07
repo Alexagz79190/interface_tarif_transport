@@ -187,7 +187,7 @@ if DEBUG:
 st.subheader("📍 Paramètres expédition")
 
 departement = st.text_input("Département (ex : 35)", value="35").strip()
-palette_parfaite = st.checkbox("Palette parfaite (requis XPO)", value=True)
+palette_parfaite = st.toggle("Palette parfaite (requis XPO)", value=True)
 
 st.write("### Palettes")
 
