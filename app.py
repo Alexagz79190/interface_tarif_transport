@@ -187,7 +187,72 @@ if DEBUG:
 st.subheader("📍 Paramètres expédition")
 
 departement = st.text_input("Département (ex : 35)", value="35").strip()
-palette_parfaite = st.toggle("Palette parfaite (requis XPO)", value=True)
+
+# ✅ Remplace le checkbox ici par le bloc PRO
+# --- CSS carte toggle ---
+st.markdown("""
+<style>
+.big-card {
+    padding: 18px 22px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0px 3px 12px rgba(0,0,0,0.08);
+}
+.card-ok {
+    background: rgba(0, 200, 0, 0.12);
+    border: 2px solid rgba(0, 160, 0, 0.45);
+}
+.card-nok {
+    background: rgba(255, 0, 0, 0.10);
+    border: 2px solid rgba(200, 0, 0, 0.35);
+}
+/* agrandir le toggle */
+div[data-baseweb="switch"] {
+    transform: scale(1.35);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --- Etat en session ---
+if "palette_parfaite" not in st.session_state:
+    st.session_state.palette_parfaite = True
+
+# --- Carte dynamique ---
+if st.session_state.palette_parfaite:
+    st.markdown(
+        """
+        <div class="big-card card-ok">
+            ✅ Palette parfaite (requis XPO)
+            <span style="font-size:16px; font-weight:600;">ACTIVÉ</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        """
+        <div class="big-card card-nok">
+            ❌ Palette parfaite (requis XPO)
+            <span style="font-size:16px; font-weight:600;">DÉSACTIVÉ</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# --- Toggle ---
+st.session_state.palette_parfaite = st.toggle(
+    " ",
+    value=st.session_state.palette_parfaite,
+    label_visibility="collapsed"
+)
+
+palette_parfaite = st.session_state.palette_parfaite
+
 
 st.write("### Palettes")
 
@@ -266,3 +331,5 @@ if st.button("✅ Calculer"):
     except Exception as e:
         st.error("Erreur pendant le calcul :")
         st.code(str(e))
+
+
