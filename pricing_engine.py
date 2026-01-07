@@ -462,22 +462,39 @@ def compute_prices(
 
     results = []
 
-    # GEODIS
-    base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
-    results.append(("GEODIS", base, appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa), f"Poids total {poids_total} kg"))
+    # ---------------- GEODIS ----------------
+    ok, msg = check_limits(palettes, cfg_geodis, "GEODIS")
+    if not ok:
+        results.append(("GEODIS", np.nan, np.nan, msg))
+    else:
+        base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
+        results.append(("GEODIS", base, appliquer_taxe_et_rfa(base, "GEODIS", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # DACHSER
-    base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
-    results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), f"Poids total {poids_total} kg"))
+    # ---------------- DACHSER ----------------
+    ok, msg = check_limits(palettes, cfg_dachser, "DACHSER")
+    if not ok:
+        results.append(("DACHSER", np.nan, np.nan, msg))
+    else:
+        base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
+        results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # KUEHNE (tranches kg clean)
-    base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
-    results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
+    # ---------------- KUEHNE ----------------
+    ok, msg = check_limits(palettes, cfg_kuehne, "KUEHNE")
+    if not ok:
+        results.append(("KUEHNE", np.nan, np.nan, msg))
+    else:
+        base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
+        results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # XPO
-    base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
-    results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
+    # ---------------- XPO ----------------
+    ok, msg = check_limits(palettes, cfg_xpo, "XPO")
+    if not ok:
+        results.append(("XPO", np.nan, np.nan, msg))
+    else:
+        base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
+        results.append(("XPO", base, appliquer_taxe_et_rfa(base, "XPO", taxes, rfa), info))
 
+    # ---------------- FORMAT OUTPUT ----------------
     out = []
     for t, base, total, info in results:
         out.append({
