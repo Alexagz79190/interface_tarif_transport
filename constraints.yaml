@@ -33,15 +33,24 @@ XPO:
     no_half_when_multiple: true
 
 GEODIS:
-  enabled: true
+  split_100kg: true
+  rounding_10kg: true
+
+  limits:
+    max_weight_total_kg: 1000
+    max_length_m: 4.0
+    max_height_m: 2.0
 
 DACHSER:
   split_100kg: true
   rounding_10kg: true
 
-  multi_trip_dept:
-    "20": ["13", "20"]
-
+  limits:
+    max_weight_total_kg: 1500
+    max_length_m: 2.4
+    max_width_m: 1.8
+    max_height_m: 2.2
+    
 KUEHNE:
   split_100kg: true
   rounding_10kg: true
