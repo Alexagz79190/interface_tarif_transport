@@ -232,6 +232,9 @@ def trouver_prix_100kg(row, poids, rounding_10kg=True):
 def prix_transporteurs_kg(df, departement, poids_total, cfg):
     dep = str(departement).zfill(2)
 
+    print("DEBUG KUEHNE ranges =", [c for c in df.columns if parse_range(c)][:10])
+
+
     split_100 = cfg.get("split_100kg", True)
     rounding_10kg = cfg.get("rounding_10kg", True)
 
@@ -450,10 +453,14 @@ def compute_prices(departement, palettes, palette_parfaite,
     base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
     results.append(("DACHSER", base, appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa), f"Poids total {poids_total} kg"))
 
-    # -------- KUEHNE
-    cfg_kuehne = constraints.get("KUEHNE", {})
-    base = prix_kuehne(df_kuehne, departement, poids_total, cfg_kuehne)
-    results.append(("KUEHNE", base, appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa), f"Poids total {poids_total} kg"))
+    # KUEHNE (format clean => tranches kg)
+    base = prix_transporteurs_kg(df_kuehne, departement, poids_total)
+    results.append((
+        "KUEHNE",
+        base,
+        appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa),
+        f"Poids total {poids_total} kg"
+    ))
 
     # -------- XPO
     cfg_xpo = constraints.get("XPO", {})
