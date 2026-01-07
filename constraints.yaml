@@ -9,6 +9,7 @@ GLOBAL:
 XPO:
   enabled: true
   palette_parfaite_required: true
+  fixed_fee_eur: 3.00
 
   # Formats acceptés (cm)
   allowed_formats_cm:
