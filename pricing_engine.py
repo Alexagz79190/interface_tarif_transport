@@ -519,12 +519,10 @@ def compute_prices(
         else:
             base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
 
-    results.append((
-        "XPO",
-        base,
-        appliquer_taxe_et_rfa(base, "XPO", taxes, rfa),
-        info
-    ))
+            fixed_fee = cfg_xpo.get("fixed_fee_eur", 0) or 0
+            if not pd.isna(base):
+                base = base + fixed_fee
+                info = f"{info} + forfait {fixed_fee}€"
 
     # ============================================================
     # FORMAT OUTPUT
