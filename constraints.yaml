@@ -42,21 +42,21 @@ GEODIS:
     max_height_m: 2.0
 
 DACHSER:
+  enabled: true
+  fixed_fee_eur: 3.98          # ✅ supplément fixe par expédition
   split_100kg: true
   rounding_10kg: true
-
   limits:
     max_weight_per_pallet_kg: 1500
     max_length_m: 2.4
     max_width_m: 1.8
     max_height_m: 2.2
-    
+  multi_trip_dept:
+    "20": ["13", "20"]
+
 KUEHNE:
+  enabled: false               # ✅ désactivé
   split_100kg: true
   rounding_10kg: true
-  max_weight_kg: 1500
-
-  dept_surcharge:
-    "20": 15
-    "2A": 15
-    "2B": 15
+  limits:
+    max_total_weight_kg: 1500
