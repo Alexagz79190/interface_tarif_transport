@@ -46,7 +46,7 @@ DACHSER:
   rounding_10kg: true
 
   limits:
-    max_weight_total_kg: 1500
+    max_weight_per_pallet_kg: 1500
     max_length_m: 2.4
     max_width_m: 1.8
     max_height_m: 2.2
