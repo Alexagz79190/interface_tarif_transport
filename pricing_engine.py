@@ -186,8 +186,26 @@ def load_dachser_from_sheet(df_raw):
     df = df[df["departement"].notna()].copy()
     df["departement"] = df["departement"].astype(str).str.zfill(2)
 
+    # colonne difficulté (colonne D fallback)
+    diff_col = None
+    for c in df.columns:
+        name = str(c).strip().lower()
+        if name in ("difficulte", "difficulté"):
+            diff_col = c
+            break
+    if diff_col is None and len(df.columns) >= 4:
+        diff_col = df.columns[3]
+
+    if diff_col is not None:
+        df = df.rename(columns={diff_col: "difficulte"})
+        df["difficulte"] = df["difficulte"].apply(lambda x: "" if pd.isna(x) else str(x).strip())
+        df["difficulte"] = df["difficulte"].replace("nan", "")
+    else:
+        df["difficulte"] = ""
+
+    # conversion float uniquement sur colonnes tranches kg
     for col in df.columns:
-        if col != "departement":
+        if col not in ("departement", "difficulte") and parse_range(col):
             df[col] = df[col].apply(to_float)
 
     return df
@@ -438,7 +456,7 @@ def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg):
 # FONCTION ZONE DIFFICILE
 # ============================================================
 
-def load_kuehne_zone_from_sheet(df_zone_raw) -> set:
+def load_zone_set_from_sheet(df_zone_raw) -> set:
     # 1) On normalise le sheet comme les autres (1ère ligne = header)
     df = _generic_load_sheet(df_zone_raw)
 
@@ -465,7 +483,7 @@ def load_kuehne_zone_from_sheet(df_zone_raw) -> set:
             if "CODE" in c and "POSTAL" in c:
                 cp_col = c
                 break
-        # fallback 2 : première colonne (comme tu dis que c’est la 1ère)
+        # fallback 2 : première colonne
         if cp_col is None and len(df.columns) >= 1:
             cp_col = df.columns[0]
 
@@ -477,6 +495,30 @@ def load_kuehne_zone_from_sheet(df_zone_raw) -> set:
     return set(df[cp_col].tolist())
 
 # ============================================================
+# FONCTION COEFICIENT TAXE ZONE DIFFICILE XPO 
+# ============================================================
+
+def poids_taxe_palette_xpo(L_cm: float, l_cm: float) -> int:
+    a, b = sorted([int(L_cm), int(l_cm)])
+    mapping = {
+        (80, 120): 400,
+        (100, 120): 600,
+        (120, 120): 800,
+    }
+    # None = format non géré => on bloque XPO
+    return mapping.get((a, b), None)
+
+
+def poids_taxe_total_xpo(palettes) -> int:
+    total = 0
+    for p in palettes:
+        pt = poids_taxe_palette_xpo(p["L"], p["l"])
+        if pt is None:
+            return None
+        total += pt
+    return total
+
+# ============================================================
 # API PRINCIPALE
 # ============================================================
 
@@ -484,6 +526,9 @@ def compute_prices(
     departement,
     code_postal: str,
     kuehne_zone: set,
+    dachser_zone: set,
+    xpo_acces_difficile: set,
+    xpo_grande_ville: set,  
     palettes,
     palette_parfaite,
     df_geodis,
@@ -540,13 +585,46 @@ def compute_prices(
             base = np.nan
             info = reason
         else:
-            base = prix_transporteurs_kg(df_dachser, departement, poids_total, cfg_dachser)
-
+            is_zone_difficile = code_postal in dachser_zone
             fixed_fee = cfg_dachser.get("fixed_fee_eur", 0) or 0
-            if not pd.isna(base):
-                base = base + fixed_fee
+            zone_fee = cfg_dachser.get("zone_difficile_fee_eur", 0) or 0
 
-            info = f"Poids total {poids_total} kg + forfait {fixed_fee}€"
+            # Filtrer Dachser sur le département
+            dfd = df_dachser.copy()
+            dfd["departement"] = dfd["departement"].astype(str).str.zfill(2)
+            dfd = dfd[dfd["departement"] == str(departement).zfill(2)]
+
+            if dfd.empty:
+                base = np.nan
+                info = "DACHSER ignoré : département absent"
+            else:
+                # Choisir la bonne ligne selon difficulté (vide vs non vide)
+                row = dfd.iloc[0]
+                if "difficulte" in dfd.columns:
+                    diff = dfd["difficulte"].apply(lambda x: "" if pd.isna(x) else str(x).strip())
+                    has_diff = diff.ne("") & diff.ne("nan")
+
+                    dfd2 = dfd[has_diff] if is_zone_difficile else dfd[~has_diff]
+                    if not dfd2.empty:
+                        row = dfd2.iloc[0]
+
+                # Calcul tranches kg sur la ligne choisie
+                if cfg_dachser.get("split_100kg", True) and poids_total > 100:
+                    base = trouver_prix_100kg(row, poids_total, cfg_dachser.get("rounding_10kg", True))
+                else:
+                    base = trouver_prix_forfait(row, poids_total)
+
+                # Ajout des frais
+                added = fixed_fee + (zone_fee if is_zone_difficile else 0)
+                if not pd.isna(base):
+                    base = base + added
+
+                info = (
+                    f"Poids total {poids_total} kg | "
+                    f"zone difficile={is_zone_difficile} | "
+                    f"forfait={fixed_fee}€ | "
+                    f"sup zone={zone_fee if is_zone_difficile else 0}€"
+                )
 
     results.append((
         "DACHSER",
@@ -554,6 +632,7 @@ def compute_prices(
         appliquer_taxe_et_rfa(base, "DACHSER", taxes, rfa),
         info
     ))
+
 
     # ============================================================
     # KUEHNE (avec zone difficile via code postal)
@@ -617,12 +696,45 @@ def compute_prices(
             base = np.nan
             info = reason
         else:
+            # Règles XPO existantes (palette parfaite, formats autorisés, etc.)
             base, info = prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg_xpo)
 
             fixed_fee = cfg_xpo.get("fixed_fee_eur", 0) or 0
+
+            # CP flags
+            is_acces_difficile = code_postal in xpo_acces_difficile
+            is_grande_ville = code_postal in xpo_grande_ville
+
+            surcharge_acces = 0.0
+            surcharge_gv = 8.0 if is_grande_ville else 0.0
+
+            # Accès difficile : 15€/100kg (poids taxé) plafonné à 150€
+            if is_acces_difficile:
+                pt_total = poids_taxe_total_xpo(palettes)
+
+                # Si format palette non supporté => on bloque XPO (et on ne calcule pas)
+                if pt_total is None:
+                    base = np.nan
+                    info = "XPO ignoré : format palette non supporté pour accès difficile (attendu 80x120, 100x120 ou 120x120)"
+                else:
+                    surcharge_acces = min(150.0, 15.0 * (pt_total / 100.0))
+
+            # Ajout des frais si base valide
             if not pd.isna(base):
-                base = base + fixed_fee
-                info = f"{info} + forfait {fixed_fee}€"
+                base = base + fixed_fee + surcharge_acces + surcharge_gv
+
+                info = (
+                    f"{info}"
+                    f" + forfait {fixed_fee}€"
+                    f" | accès difficile={is_acces_difficile}"
+                )
+
+                if is_acces_difficile:
+                    info += f" (poids taxé={pt_total} kg, +{round(surcharge_acces,2)}€)"
+                else:
+                    info += " (+0€)"
+
+                info += f" | grande ville={is_grande_ville} (+{round(surcharge_gv,2)}€)"
 
     results.append((
         "XPO",
