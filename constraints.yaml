@@ -43,7 +43,8 @@ GEODIS:
 
 DACHSER:
   enabled: true
-  fixed_fee_eur: 3.98          # ✅ supplément fixe par expédition
+  zone_difficile_fee_eur: 0.00     # ✅ supplément zone difficile  
+  fixed_fee_eur: 3.98              # ✅ supplément fixe par expédition
   split_100kg: true
   rounding_10kg: true
   limits:
