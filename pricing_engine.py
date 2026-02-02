@@ -196,11 +196,15 @@ def load_dachser_from_sheet(df_raw):
 def load_kuehne_from_sheet(df_raw):
     """
     Format CLEAN attendu :
-    1ère ligne = headers incluant "1-29 kg", "30-39 kg", etc.
+    - Colonne département
+    - Colonne difficulté (colonne D) : vide = standard, non vide = difficile
+    - Colonnes tranches poids : "1-29 kg", "30-39 kg", etc.
     """
     df = _generic_load_sheet(df_raw)
 
-    # trouver la colonne département
+    # ------------------------------------------------------------
+    # Département
+    # ------------------------------------------------------------
     dept_col = None
     for c in df.columns:
         if str(c).strip().lower() == "departement":
@@ -216,9 +220,34 @@ def load_kuehne_from_sheet(df_raw):
     df = df[df["departement"].notna()].copy()
     df["departement"] = df["departement"].astype(str).str.zfill(2)
 
-    # conversion float uniquement sur colonnes tranches
+    # ------------------------------------------------------------
+    # Difficulté (colonne D du sheet)
+    # ------------------------------------------------------------
+    diff_col = None
+    for c in df.columns:
+        name = str(c).strip().lower()
+        if name in ("difficulte", "difficulté"):
+            diff_col = c
+            break
+
+    # fallback strict : colonne D (index 3)
+    if diff_col is None and len(df.columns) >= 4:
+        diff_col = df.columns[3]
+
+    if diff_col is not None:
+        df = df.rename(columns={diff_col: "difficulte"})
+        # conversion safe : gère int/float/None
+        df["difficulte"] = df["difficulte"].apply(lambda x: "" if pd.isna(x) else str(x).strip())
+        # au cas où ça remonte "nan"
+        df["difficulte"] = df["difficulte"].replace("nan", "")
+    else:
+        df["difficulte"] = ""
+
+    # ------------------------------------------------------------
+    # Conversion float UNIQUEMENT sur colonnes tranches kg
+    # ------------------------------------------------------------
     for col in df.columns:
-        if col != "departement" and parse_range(col):
+        if col not in ("departement", "difficulte") and parse_range(col):
             df[col] = df[col].apply(to_float)
 
     return df
@@ -405,6 +434,47 @@ def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg):
 
     return row[col], f"XPO : {total_pal} palette(s), tranche {col}"
 
+# ============================================================
+# FONCTION ZONE DIFFICILE
+# ============================================================
+
+def load_kuehne_zone_from_sheet(df_zone_raw) -> set:
+    # 1) On normalise le sheet comme les autres (1ère ligne = header)
+    df = _generic_load_sheet(df_zone_raw)
+
+    # 2) Normalisation des noms de colonnes (MAJ, trim, suppression espaces/_)
+    def _norm_col(c: str) -> str:
+        c = str(c).strip().upper()
+        c = c.replace("É", "E").replace("È", "E").replace("Ê", "E")
+        c = c.replace("À", "A").replace("Â", "A")
+        c = c.replace("Ù", "U").replace("Û", "U")
+        c = c.replace("Ç", "C")
+        c = re.sub(r"[\s\-_]+", "", c)  # enlève espaces, tirets, underscores
+        return c
+
+    col_map = {c: _norm_col(c) for c in df.columns}
+    df = df.rename(columns=col_map)
+
+    # 3) Détection robuste de la colonne code postal
+    cp_col = None
+    if "CODEPOSTAL" in df.columns:
+        cp_col = "CODEPOSTAL"
+    else:
+        # fallback : trouver une colonne contenant "CODE" et "POSTAL"
+        for c in df.columns:
+            if "CODE" in c and "POSTAL" in c:
+                cp_col = c
+                break
+        # fallback 2 : première colonne (comme tu dis que c’est la 1ère)
+        if cp_col is None and len(df.columns) >= 1:
+            cp_col = df.columns[0]
+
+    # 4) Nettoyage + set
+    df[cp_col] = df[cp_col].apply(lambda x: "" if pd.isna(x) else str(x).strip())
+    df[cp_col] = df[cp_col].str.replace(r"\.0$", "", regex=True)  # 35000.0 -> 35000
+
+    df = df[df[cp_col].str.fullmatch(r"\d{5}", na=False)]
+    return set(df[cp_col].tolist())
 
 # ============================================================
 # API PRINCIPALE
@@ -412,6 +482,8 @@ def prix_xpo(df_xpo, departement, palettes, palette_parfaite, cfg):
 
 def compute_prices(
     departement,
+    code_postal: str,
+    kuehne_zone: set,
     palettes,
     palette_parfaite,
     df_geodis,
@@ -484,7 +556,7 @@ def compute_prices(
     ))
 
     # ============================================================
-    # KUEHNE
+    # KUEHNE (avec zone difficile via code postal)
     # ============================================================
     if not cfg_kuehne.get("enabled", True):
         base = np.nan
@@ -495,8 +567,36 @@ def compute_prices(
             base = np.nan
             info = reason
         else:
-            base = prix_transporteurs_kg(df_kuehne, departement, poids_total, cfg_kuehne)
-            info = f"Poids total {poids_total} kg"
+            is_zone_difficile = code_postal in kuehne_zone
+
+            dfk = df_kuehne.copy()
+            dfk["departement"] = dfk["departement"].astype(str).str.zfill(2)
+            dfk = dfk[dfk["departement"] == str(departement).zfill(2)]
+
+            if dfk.empty:
+                base = np.nan
+                info = "KUEHNE ignoré : département absent"
+            else:
+                # Choisir ligne difficile / non difficile
+                if "difficulte" in dfk.columns:
+                    diff = dfk["difficulte"].astype(str).str.strip()
+                    has_diff = diff.ne("") & diff.ne("nan")
+
+                    dfk2 = dfk[has_diff] if is_zone_difficile else dfk[~has_diff]
+                    if dfk2.empty:
+                        dfk2 = dfk  # fallback
+
+                    row = dfk2.iloc[0]
+                else:
+                    row = dfk.iloc[0]  # fallback si pas de colonne difficulté
+
+                # Calcul prix sur la ligne choisie
+                if cfg_kuehne.get("split_100kg", True) and poids_total > 100:
+                    base = trouver_prix_100kg(row, poids_total, cfg_kuehne.get("rounding_10kg", True))
+                else:
+                    base = trouver_prix_forfait(row, poids_total)
+
+                info = f"Poids total {poids_total} kg | zone difficile={is_zone_difficile}"
 
     results.append((
         "KUEHNE",
@@ -524,7 +624,7 @@ def compute_prices(
                 base = base + fixed_fee
                 info = f"{info} + forfait {fixed_fee}€"
 
-        results.append((
+    results.append((
         "XPO",
         base,
         appliquer_taxe_et_rfa(base, "XPO", taxes, rfa),
@@ -544,3 +644,4 @@ def compute_prices(
         })
 
     return out
+
