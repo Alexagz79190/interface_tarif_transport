@@ -11,6 +11,7 @@ from pricing_engine import (
     load_kuehne_from_sheet,
     load_xpo_from_sheet,
     load_taxes_from_sheet,
+    load_zone_set_from_sheet,
     compute_prices
 )
 
@@ -51,13 +52,13 @@ def get_ids_from_secrets():
 
     keys = [
     "GEODIS_ID", "GEODIS_TAB",
-    "DACHSER_ID", "DACHSER_TAB",
-    "KUEHNE_ID", "KUEHNE_TAB",
-    "XPO_ID", "XPO_TAB",
+    "DACHSER_ID", "DACHSER_TAB", "DACHSER_ZONE_TAB",
+    "KUEHNE_ID", "KUEHNE_TAB", "KUEHNE_ZONE_TAB",
+    "XPO_ID", "XPO_TAB", "XPO_ZONE_TAB", "XPO_GV_TAB",
     "TAXE_GO_ID", "TAXE_GO_TAB",
     "RFA_TAB",
-    "KUEHNE_ZONE_TAB",
 ]
+
     missing = [k for k in keys if k not in s]
     if missing:
         raise ValueError(f"Secrets manquants dans [gsheets] : {missing}")
@@ -68,6 +69,7 @@ def get_ids_from_secrets():
 
         "DACHSER_ID": s["DACHSER_ID"],
         "DACHSER_TAB": s["DACHSER_TAB"],
+        "DACHSER_ZONE_TAB": s["DACHSER_ZONE_TAB"],
 
         "KUEHNE_ID": s["KUEHNE_ID"],
         "KUEHNE_TAB": s["KUEHNE_TAB"],
@@ -75,6 +77,8 @@ def get_ids_from_secrets():
 
         "XPO_ID": s["XPO_ID"],
         "XPO_TAB": s["XPO_TAB"],
+        "XPO_ZONE_TAB": s["XPO_ZONE_TAB"],
+        "XPO_GV_TAB": s["XPO_GV_TAB"],
 
         "TAXE_ID": s["TAXE_GO_ID"],
         "TAXE_TAB": s["TAXE_GO_TAB"],
@@ -93,25 +97,41 @@ def load_all_data(version="v1"):
     df_dachser_raw = load_sheet(ids["DACHSER_ID"], ids["DACHSER_TAB"])
     df_kuehne_raw  = load_sheet(ids["KUEHNE_ID"],  ids["KUEHNE_TAB"])
     df_kuehne_zone_raw = load_sheet(ids["KUEHNE_ID"], ids["KUEHNE_ZONE_TAB"])
-    df_xpo_raw     = load_sheet(ids["XPO_ID"],     ids["XPO_TAB"])
+
+    df_xpo_raw       = load_sheet(ids["XPO_ID"], ids["XPO_TAB"])
+    df_xpo_zone_raw  = load_sheet(ids["XPO_ID"], ids["XPO_ZONE_TAB"])
+    df_xpo_gv_raw    = load_sheet(ids["XPO_ID"], ids["XPO_GV_TAB"])
+
+    df_dachser_zone_raw = load_sheet(ids["DACHSER_ID"], ids["DACHSER_ZONE_TAB"])
 
     # Taxes et RFA viennent du même fichier mais onglets différents
-    df_taxe_raw    = load_sheet(ids["TAXE_ID"], ids["TAXE_TAB"])
-    df_rfa_raw     = load_sheet(ids["TAXE_ID"], ids["RFA_TAB"])
+    df_taxe_raw = load_sheet(ids["TAXE_ID"], ids["TAXE_TAB"])
+    df_rfa_raw  = load_sheet(ids["TAXE_ID"], ids["RFA_TAB"])
 
-    # PARSE
+    # PARSE tarifs
     df_geodis  = load_geodis_from_sheet(df_geodis_raw)
     df_dachser = load_dachser_from_sheet(df_dachser_raw)
     df_kuehne  = load_kuehne_from_sheet(df_kuehne_raw)
     df_xpo     = load_xpo_from_sheet(df_xpo_raw)
 
-    taxes = load_taxes_from_sheet(df_taxe_raw)  # {GEODIS: 15.19, ...}
-    rfa   = load_taxes_from_sheet(df_rfa_raw)   # {GEODIS: 2.50, ...}
-    # Charger zone difficile KUEHNE
-    from pricing_engine import load_kuehne_zone_from_sheet
-    kuehne_zone = load_kuehne_zone_from_sheet(df_kuehne_zone_raw)
+    # PARSE taxes/rfa
+    taxes = load_taxes_from_sheet(df_taxe_raw)
+    rfa   = load_taxes_from_sheet(df_rfa_raw)
 
-    return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids
+    # PARSE zones (sets de CP)
+    kuehne_zone = load_zone_set_from_sheet(df_kuehne_zone_raw)
+    dachser_zone = load_zone_set_from_sheet(df_dachser_zone_raw)
+    xpo_acces_difficile = load_zone_set_from_sheet(df_xpo_zone_raw)
+    xpo_grande_ville = load_zone_set_from_sheet(df_xpo_gv_raw)
+
+    return (
+        df_geodis, df_dachser, df_kuehne, df_xpo,
+        taxes, rfa,
+        kuehne_zone, dachser_zone,
+        xpo_acces_difficile, xpo_grande_ville,
+        ids
+    )
+
 
 # ---------------------------------------------------------------------
 # Charger les contraintes YAML (cache)
@@ -146,7 +166,7 @@ if "palettes" not in st.session_state:
 if DEBUG:
     with st.expander("🛠️ Debug / Données chargées", expanded=False):
         try:
-            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids = load_all_data(version="v9")
+            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, dachser_zone, xpo_acces_difficile, xpo_grande_ville, ids = load_all_data(version="v9")
             constraints = get_constraints(version="v1")
 
             st.write("✅ IDs / Onglets utilisés :")
@@ -199,13 +219,7 @@ if not re.fullmatch(r"\d{5}", code_postal):
     st.error("Code postal invalide : 5 chiffres (ex: 35000).")
     st.stop()
 
-# Département dérivé du code postal (FR)
-# DOM/TOM: 97x/98x => 3 chiffres, sinon 2 chiffres
-if code_postal.startswith(("97", "98")):
-    departement = code_postal[:3]
-else:
-    departement = code_postal[:2]
-
+departement = code_postal[:2]
 
 # ✅ Remplace le checkbox ici par le bloc PRO
 # --- CSS carte toggle ---
@@ -317,13 +331,16 @@ st.divider()
 
 if st.button("✅ Calculer"):
     try:
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids = load_all_data(version="v9")
+        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, dachser_zone, xpo_acces_difficile, xpo_grande_ville, ids = load_all_data(version="v9")
         constraints = get_constraints(version="v1")  # ✅ NEW
 
         results = compute_prices(
             departement=departement,
             code_postal=code_postal,
             kuehne_zone=kuehne_zone,
+            dachser_zone=dachser_zone,
+            xpo_acces_difficile=xpo_acces_difficile,
+            xpo_grande_ville=xpo_grande_ville,
             palettes=st.session_state.palettes,
             palette_parfaite=palette_parfaite,
             df_geodis=df_geodis,
