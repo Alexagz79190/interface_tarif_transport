@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 
 from gsheets_loader import load_sheet
 from config_loader import load_constraints
@@ -49,13 +50,14 @@ def get_ids_from_secrets():
     s = st.secrets["gsheets"]
 
     keys = [
-        "GEODIS_ID", "GEODIS_TAB",
-        "DACHSER_ID", "DACHSER_TAB",
-        "KUEHNE_ID", "KUEHNE_TAB",
-        "XPO_ID", "XPO_TAB",
-        "TAXE_GO_ID", "TAXE_GO_TAB",
-        "RFA_TAB",
-    ]
+    "GEODIS_ID", "GEODIS_TAB",
+    "DACHSER_ID", "DACHSER_TAB",
+    "KUEHNE_ID", "KUEHNE_TAB",
+    "XPO_ID", "XPO_TAB",
+    "TAXE_GO_ID", "TAXE_GO_TAB",
+    "RFA_TAB",
+    "KUEHNE_ZONE_TAB",
+]
     missing = [k for k in keys if k not in s]
     if missing:
         raise ValueError(f"Secrets manquants dans [gsheets] : {missing}")
@@ -69,6 +71,7 @@ def get_ids_from_secrets():
 
         "KUEHNE_ID": s["KUEHNE_ID"],
         "KUEHNE_TAB": s["KUEHNE_TAB"],
+        "KUEHNE_ZONE_TAB": s["KUEHNE_ZONE_TAB"],
 
         "XPO_ID": s["XPO_ID"],
         "XPO_TAB": s["XPO_TAB"],
@@ -89,6 +92,7 @@ def load_all_data(version="v1"):
     df_geodis_raw  = load_sheet(ids["GEODIS_ID"],  ids["GEODIS_TAB"])
     df_dachser_raw = load_sheet(ids["DACHSER_ID"], ids["DACHSER_TAB"])
     df_kuehne_raw  = load_sheet(ids["KUEHNE_ID"],  ids["KUEHNE_TAB"])
+    df_kuehne_zone_raw = load_sheet(ids["KUEHNE_ID"], ids["KUEHNE_ZONE_TAB"])
     df_xpo_raw     = load_sheet(ids["XPO_ID"],     ids["XPO_TAB"])
 
     # Taxes et RFA viennent du même fichier mais onglets différents
@@ -103,8 +107,11 @@ def load_all_data(version="v1"):
 
     taxes = load_taxes_from_sheet(df_taxe_raw)  # {GEODIS: 15.19, ...}
     rfa   = load_taxes_from_sheet(df_rfa_raw)   # {GEODIS: 2.50, ...}
+    # Charger zone difficile KUEHNE
+    from pricing_engine import load_kuehne_zone_from_sheet
+    kuehne_zone = load_kuehne_zone_from_sheet(df_kuehne_zone_raw)
 
-    return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids
+    return df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids
 
 # ---------------------------------------------------------------------
 # Charger les contraintes YAML (cache)
@@ -139,7 +146,7 @@ if "palettes" not in st.session_state:
 if DEBUG:
     with st.expander("🛠️ Debug / Données chargées", expanded=False):
         try:
-            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids = load_all_data(version="v9")
+            df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids = load_all_data(version="v9")
             constraints = get_constraints(version="v1")
 
             st.write("✅ IDs / Onglets utilisés :")
@@ -186,7 +193,19 @@ if DEBUG:
 # ---------------------------------------------------------------------
 st.subheader("📍 Paramètres expédition")
 
-departement = st.text_input("Département (ex : 35)", value="35").strip()
+code_postal = st.text_input("Code postal (ex : 35000)", value="35000").strip()
+
+if not re.fullmatch(r"\d{5}", code_postal):
+    st.error("Code postal invalide : 5 chiffres (ex: 35000).")
+    st.stop()
+
+# Département dérivé du code postal (FR)
+# DOM/TOM: 97x/98x => 3 chiffres, sinon 2 chiffres
+if code_postal.startswith(("97", "98")):
+    departement = code_postal[:3]
+else:
+    departement = code_postal[:2]
+
 
 # ✅ Remplace le checkbox ici par le bloc PRO
 # --- CSS carte toggle ---
@@ -298,11 +317,13 @@ st.divider()
 
 if st.button("✅ Calculer"):
     try:
-        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, ids = load_all_data(version="v9")
+        df_geodis, df_dachser, df_kuehne, df_xpo, taxes, rfa, kuehne_zone, ids = load_all_data(version="v9")
         constraints = get_constraints(version="v1")  # ✅ NEW
 
         results = compute_prices(
             departement=departement,
+            code_postal=code_postal,
+            kuehne_zone=kuehne_zone,
             palettes=st.session_state.palettes,
             palette_parfaite=palette_parfaite,
             df_geodis=df_geodis,
