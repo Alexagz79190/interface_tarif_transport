@@ -55,7 +55,7 @@ DACHSER:
     "20": ["13", "20"]
 
 KUEHNE:
-  enabled: true               # ✅ désactivé
+  enabled: false             # ✅ désactivé
   split_100kg: true
   rounding_10kg: true
   limits:
