@@ -3,6 +3,9 @@ import numpy as np
 import math
 import re
 from config_loader import load_constraints
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
+
 
 
 # ============================================================
@@ -63,6 +66,26 @@ def parse_range(colname):
         return float(m.group(1)), float(m.group(2))
 
     return None
+
+def is_in_period_mmdd(start_mmdd: str, end_mmdd: str, tz="Europe/Paris") -> bool:
+    today = datetime.now(ZoneInfo(tz)).date()
+    y = today.year
+    start_m, start_d = map(int, start_mmdd.split("-"))
+    end_m, end_d = map(int, end_mmdd.split("-"))
+
+    start = date(y, start_m, start_d)
+    end = date(y, end_m, end_d)
+
+    # cas normal (05-01 -> 08-31)
+    if start <= end:
+        return start <= today <= end
+
+    # cas période qui traverse l'année (ex 11-15 -> 02-15)
+    return today >= start or today <= end
+
+def count_europe_palettes(palettes):
+    nb_europe = sum(1 for p in palettes if bool(p.get("is_europe", False)))
+    return nb_europe
 
 
 # ============================================================
@@ -287,6 +310,225 @@ def load_xpo_from_sheet(df_raw):
 
     return df
 
+# ============================================================
+# ZONE URBAINE
+# ============================================================
+
+def _normalize_zone_label(z):
+    if z is None:
+        return None
+    s = str(z).strip().upper()
+    # attend "ZONE A" / "ZONE B" ou "A"/"B"
+    if "A" in s and "ZONE" in s:
+        return "A"
+    if "B" in s and "ZONE" in s:
+        return "B"
+    if s in ("A", "B"):
+        return s
+    m = re.search(r"\b([AB])\b", s)
+    return m.group(1) if m else None
+
+
+def _parse_cp_cell(cell):
+    """
+    Renvoie:
+      - cps: set de CP explicites
+      - ranges: list de tuples (start,end) inclusifs
+      - all_dept: bool (Tous codes postaux)
+    """
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return {"cps": set(), "ranges": [], "all_dept": False}
+
+    s = str(cell).strip()
+    s_up = s.upper()
+
+    if "TOUS" in s_up and "CODE" in s_up and "POST" in s_up:
+        return {"cps": set(), "ranges": [], "all_dept": True}
+
+    # Plage type "De 35000 à 35999" ou "35000-35999"
+    m = re.search(r"(\d{5})\s*(?:A|À|-)\s*(\d{5})", s_up)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if a > b:
+            a, b = b, a
+        return {"cps": set(), "ranges": [(a, b)], "all_dept": False}
+
+    # Liste séparée par virgules
+    cps = set()
+    for token in re.split(r"[,;/\s]+", s):
+        token = token.strip()
+        if re.fullmatch(r"\d{5}", token):
+            cps.add(token)
+
+    return {"cps": cps, "ranges": [], "all_dept": False}
+
+
+def load_geodis_zone_urbaine_from_sheet(df_zone_urbaine_raw):
+    """
+    Attendu: colonnes:
+      Département | Secteur | CP | Type de Zone
+    Renvoie:
+      cp_to_zone: dict cp->"A"/"B"
+      ranges: list((start,end,zone))  (sans expansion)
+      dept_prefix_zone: dict dept->"A"/"B" (Tous codes postaux)
+    """
+    df = _generic_load_sheet(df_zone_urbaine_raw)
+
+    # normalisation colonnes
+    col_norm = {c: str(c).strip().lower() for c in df.columns}
+    df = df.rename(columns=col_norm)
+
+    # repérage colonnes
+    dept_col = next((c for c in df.columns if "departement" in c or "département" in c), df.columns[0])
+    cp_col = next((c for c in df.columns if c == "cp" or "code postal" in c or "code_postal" in c), df.columns[2] if len(df.columns) >= 3 else df.columns[1])
+    zone_col = next((c for c in df.columns if "zone" in c), df.columns[-1])
+
+    cp_to_zone = {}
+    ranges = []
+    dept_prefix_zone = {}
+
+    for _, r in df.iterrows():
+        dept = extract_dept(r.get(dept_col))
+        zone = _normalize_zone_label(r.get(zone_col))
+        if not dept or zone not in ("A", "B"):
+            continue
+
+        parsed = _parse_cp_cell(r.get(cp_col))
+
+        if parsed["all_dept"]:
+            dept_prefix_zone[dept] = zone
+            continue
+
+        for cp in parsed["cps"]:
+            cp_to_zone[cp] = zone
+
+        for a, b in parsed["ranges"]:
+            ranges.append((a, b, zone))
+
+    return cp_to_zone, ranges, dept_prefix_zone
+
+def _normalize_type_label(t):
+    if t is None:
+        return None
+    s = str(t).strip().upper()
+    if "URB" in s:
+        return "URBAIN"
+    if "SAIS" in s:
+        return "SAISONNIER"
+    return None
+
+
+def load_kuehne_zone_urbaine_from_sheet(df_raw):
+    """
+    Colonnes attendues:
+      Département | Secteur | CP | Type
+    Type = Urbain / Saisonnier
+    Retour:
+      cp_to_type: dict(cp -> "URBAIN"/"SAISONNIER")
+      ranges: list((start,end,type))
+      dept_prefix_type: dict(dept -> "URBAIN"/"SAISONNIER")  (Tous codes postaux)
+    """
+    df = _generic_load_sheet(df_raw)
+
+    col_norm = {c: str(c).strip().lower() for c in df.columns}
+    df = df.rename(columns=col_norm)
+
+    dept_col = next((c for c in df.columns if "departement" in c or "département" in c), df.columns[0])
+    cp_col   = next((c for c in df.columns if c == "cp" or "code postal" in c or "code_postal" in c), df.columns[2])
+    type_col = next((c for c in df.columns if "type" in c), df.columns[-1])
+
+    cp_to_type = {}
+    ranges = []
+    dept_prefix_type = {}
+
+    for _, r in df.iterrows():
+        dept = extract_dept(r.get(dept_col))
+        typ  = _normalize_type_label(r.get(type_col))
+        if not dept or typ not in ("URBAIN", "SAISONNIER"):
+            continue
+
+        parsed = _parse_cp_cell(r.get(cp_col))
+
+        if parsed["all_dept"]:
+            dept_prefix_type[dept] = typ
+            continue
+
+        for cp in parsed["cps"]:
+            cp_to_type[cp] = typ
+
+        for a, b in parsed["ranges"]:
+            ranges.append((a, b, typ))
+
+    return cp_to_type, ranges, dept_prefix_type
+
+
+def kuehne_get_type(code_postal: str, departement: str, cp_to_type: dict, ranges: list, dept_prefix_type: dict):
+    cp = "" if code_postal is None else str(code_postal).strip()
+    cp = re.sub(r"\.0$", "", cp)
+    if re.fullmatch(r"\d{1,5}", cp):
+        cp = cp.zfill(5)
+
+    if cp in cp_to_type:
+        return cp_to_type[cp]
+
+    if re.fullmatch(r"\d{5}", cp):
+        cp_int = int(cp)
+        for a, b, t in ranges:
+            if a <= cp_int <= b:
+                return t
+
+    dep = str(departement).zfill(2)
+    t = dept_prefix_type.get(dep)
+    if t and cp.startswith(dep):
+        return t
+
+    return None
+
+
+def geodis_get_urban_zone(code_postal: str, departement: str, cp_to_zone: dict, ranges: list, dept_prefix_zone: dict):
+    # normaliser CP
+    cp = "" if code_postal is None else str(code_postal).strip()
+    cp = re.sub(r"\.0$", "", cp)
+    if re.fullmatch(r"\d{1,5}", cp):
+        cp = cp.zfill(5)
+
+    # priorité 1 : CP explicite
+    if cp in cp_to_zone:
+        return cp_to_zone[cp]
+
+    # priorité 2 : plages
+    if re.fullmatch(r"\d{5}", cp):
+        cp_int = int(cp)
+        for a, b, z in ranges:
+            if a <= cp_int <= b:
+                return z
+
+    # priorité 3 : "Tous codes postaux" => préfixe dept
+    dep = str(departement).zfill(2)
+    z = dept_prefix_zone.get(dep)
+    if z and cp.startswith(dep):
+        return z
+
+    return None
+
+def geodis_urban_fee(poids_total: float, zone: str, cfg_geodis: dict):
+    zu = cfg_geodis.get("zone_urbaine", {})
+    if not zu.get("enabled", True):
+        return 0.0
+
+    fees = zu.get("fees_eur", {})
+    fz = fees.get("zone_a", {}) if zone == "A" else fees.get("zone_b", {}) if zone == "B" else {}
+    if not fz:
+        return 0.0
+
+    if poids_total is None or pd.isna(poids_total) or poids_total <= 0:
+        return 0.0
+    if poids_total <= 30:
+        return float(fz.get("0_30", 0) or 0)
+    if poids_total <= 100:
+        return float(fz.get("30_100", 0) or 0)
+    return float(fz.get("100_plus", 0) or 0)
+
 
 # ============================================================
 # PRIX TRANCHES KG (GEODIS / DACHSER / KUEHNE)
@@ -495,6 +737,94 @@ def load_zone_set_from_sheet(df_zone_raw) -> set:
     return set(df[cp_col].tolist())
 
 # ============================================================
+# GEODIS - ZONE URBAINE
+# ============================================================
+
+def _normalize_zone_label(z):
+    if z is None:
+        return None
+    s = str(z).strip().upper()
+    if s in ("A", "ZONE A"):
+        return "A"
+    if s in ("B", "ZONE B"):
+        return "B"
+    m = re.search(r"\b([AB])\b", s)
+    return m.group(1) if m else None
+
+
+def _parse_cp_cell(cell):
+    """
+    CP:
+      - "35000,35200"
+      - "De 35000 à 35999"
+      - "35000-35999"
+      - "Tous codes postaux"
+    """
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return {"cps": set(), "ranges": [], "all_dept": False}
+
+    s = str(cell).strip()
+    s_up = s.upper()
+
+    if "TOUS" in s_up and "CODE" in s_up:
+        return {"cps": set(), "ranges": [], "all_dept": True}
+
+    m = re.search(r"(\d{5})\s*(?:A|À|-)\s*(\d{5})", s_up)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if a > b:
+            a, b = b, a
+        return {"cps": set(), "ranges": [(a, b)], "all_dept": False}
+
+    cps = set()
+    for t in re.split(r"[,;/\s]+", s):
+        if re.fullmatch(r"\d{5}", t):
+            cps.add(t)
+
+    return {"cps": cps, "ranges": [], "all_dept": False}
+
+
+def load_geodis_zone_urbaine_from_sheet(df_raw):
+    """
+    Colonnes attendues:
+      Département | Secteur | CP | Type de Zone
+    Retour:
+      cp_to_zone: dict(cp -> "A"/"B")
+      ranges: list((start,end,zone))
+      dept_prefix_zone: dict(dept -> "A"/"B")
+    """
+    df = _generic_load_sheet(df_raw)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    dept_col = next((c for c in df.columns if "departement" in c or "département" in c), df.columns[0])
+    cp_col = next((c for c in df.columns if c == "cp" or "code postal" in c), df.columns[2])
+    zone_col = next((c for c in df.columns if "zone" in c), df.columns[-1])
+
+    cp_to_zone = {}
+    ranges = []
+    dept_prefix_zone = {}
+
+    for _, r in df.iterrows():
+        dept = extract_dept(r.get(dept_col))
+        zone = _normalize_zone_label(r.get(zone_col))
+        if not dept or zone not in ("A", "B"):
+            continue
+
+        parsed = _parse_cp_cell(r.get(cp_col))
+
+        if parsed["all_dept"]:
+            dept_prefix_zone[dept] = zone
+            continue
+
+        for cp in parsed["cps"]:
+            cp_to_zone[cp] = zone
+
+        for a, b in parsed["ranges"]:
+            ranges.append((a, b, zone))
+
+    return cp_to_zone, ranges, dept_prefix_zone
+
+# ============================================================
 # FONCTION COEFICIENT TAXE ZONE DIFFICILE XPO 
 # ============================================================
 
@@ -519,13 +849,102 @@ def poids_taxe_total_xpo(palettes) -> int:
     return total
 
 # ============================================================
+# FONCTION COEFICIENT TAXE ZONE DIFFICILE XPO 
+# ============================================================
+
+def _normalize_kuehne_type(t):
+    if t is None:
+        return None
+    s = str(t).strip().upper()
+    if "URB" in s:
+        return "URBAIN"
+    if "SAIS" in s:
+        return "SAISONNIER"
+    return None
+
+
+def load_kuehne_zone_urbaine_from_sheet(df_raw):
+    """
+    Colonnes attendues:
+      Département | Secteur | CP | Type
+    Retour:
+      cp_to_type: dict(cp -> "URBAIN"/"SAISONNIER")
+      ranges: list((start,end,type))
+      dept_prefix_type: dict(dept -> "URBAIN"/"SAISONNIER")
+    """
+    df = _generic_load_sheet(df_raw)
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    dept_col = next((c for c in df.columns if "departement" in c or "département" in c), df.columns[0])
+    cp_col   = next((c for c in df.columns if c == "cp" or "code postal" in c or "code_postal" in c), df.columns[2])
+    type_col = next((c for c in df.columns if "type" in c), df.columns[-1])
+
+    cp_to_type = {}
+    ranges = []
+    dept_prefix_type = {}
+
+    for _, r in df.iterrows():
+        dept = extract_dept(r.get(dept_col))
+        t = _normalize_kuehne_type(r.get(type_col))
+        if not dept or t not in ("URBAIN", "SAISONNIER"):
+            continue
+
+        parsed = _parse_cp_cell(r.get(cp_col))
+
+        if parsed["all_dept"]:
+            dept_prefix_type[dept] = t
+            continue
+
+        for cp in parsed["cps"]:
+            cp_to_type[cp] = t
+
+        for a, b in parsed["ranges"]:
+            ranges.append((a, b, t))
+
+    return cp_to_type, ranges, dept_prefix_type
+
+
+def kuehne_get_type(code_postal: str, departement: str, cp_to_type: dict, ranges: list, dept_prefix_type: dict):
+    # normaliser CP
+    cp = "" if code_postal is None else str(code_postal).strip()
+    cp = re.sub(r"\.0$", "", cp)
+    if re.fullmatch(r"\d{1,5}", cp):
+        cp = cp.zfill(5)
+
+    # priorité 1 : CP explicite
+    if cp in cp_to_type:
+        return cp_to_type[cp]
+
+    # priorité 2 : plages
+    if re.fullmatch(r"\d{5}", cp):
+        cp_int = int(cp)
+        for a, b, t in ranges:
+            if a <= cp_int <= b:
+                return t
+
+    # priorité 3 : "Tous codes postaux" => préfixe dept
+    dep = str(departement).zfill(2)
+    t = dept_prefix_type.get(dep)  # ✅ ici .get sur dict, PAS sur list
+    if t and cp.startswith(dep):
+        return t
+
+    return None
+
+# ============================================================
 # API PRINCIPALE
 # ============================================================
 
 def compute_prices(
     departement,
     code_postal: str,
+    geodis_zone_difficile: set,
+    geodis_cp_to_zone: dict,
+    geodis_ranges: list,
+    geodis_dept_prefix_zone: dict,
     kuehne_zone: set,
+    kuehne_cp_to_type: dict,
+    kuehne_ranges: list,
+    kuehne_dept_prefix_type: dict,
     dachser_zone: set,
     xpo_acces_difficile: set,
     xpo_grande_ville: set,  
@@ -538,15 +957,19 @@ def compute_prices(
     taxes,
     rfa,
     constraints=None
+    
 ):
     if constraints is None:
         constraints = load_constraints("constraints.yaml")
 
     poids_total = sum(p["poids"] for p in palettes)
+    nb_europe = count_europe_palettes(palettes)
+
 
     cfg_geodis = constraints.get("GEODIS", {})
     cfg_dachser = constraints.get("DACHSER", {})
-    cfg_kuehne = constraints.get("KUEHNE", {})
+    cfg_kuehne_raw = constraints.get("KUEHNE", {})
+    cfg_kuehne = cfg_kuehne_raw[0] if isinstance(cfg_kuehne_raw, list) else cfg_kuehne_raw
     cfg_xpo = constraints.get("XPO", {})
 
     results = []
@@ -564,7 +987,40 @@ def compute_prices(
             info = reason
         else:
             base = prix_transporteurs_kg(df_geodis, departement, poids_total, cfg_geodis)
-            info = f"Poids total {poids_total} kg"
+
+            fixed_fee = float(cfg_geodis.get("fixed_fee_eur", 0) or 0)
+
+            # zone difficile
+            zd_cfg = cfg_geodis.get("zone_difficile", {})
+            zd_enabled = zd_cfg.get("enabled", True)
+            zd_fee = float(zd_cfg.get("fee_eur", 0) or 0)
+            is_zone_difficile = (zd_enabled and (code_postal in geodis_zone_difficile))
+
+            # zone urbaine
+            urban_zone = geodis_get_urban_zone(
+                code_postal, departement,
+                geodis_cp_to_zone, geodis_ranges, geodis_dept_prefix_zone
+            )
+            urban_fee = geodis_urban_fee(poids_total, urban_zone, cfg_geodis)
+
+            # ✅ Europe par palette (si configuré)
+            europe_fee = float(cfg_geodis.get("europe_pallet_fee_eur_per_pallet", 0) or 0)
+            surcharge_europe = 0.0
+            if europe_fee > 0 and nb_europe > 0:
+                surcharge_europe = europe_fee * float(nb_europe)
+
+            added = fixed_fee + (zd_fee if is_zone_difficile else 0) + urban_fee + surcharge_europe
+            if not pd.isna(base):
+                base = base + added
+
+            info = (
+                f"Poids total {poids_total} kg"
+                f" | forfait={fixed_fee}€"
+                f" | zone difficile={is_zone_difficile} (+{zd_fee if is_zone_difficile else 0}€)"
+                f" | zone urbaine={urban_zone} (+{round(urban_fee,2)}€)"
+            )
+            if surcharge_europe > 0:
+                info += f" | pal_europe=+{round(surcharge_europe,2)}€ ({nb_europe}x)"
 
     results.append((
         "GEODIS",
@@ -589,35 +1045,76 @@ def compute_prices(
             fixed_fee = cfg_dachser.get("fixed_fee_eur", 0) or 0
             zone_fee = cfg_dachser.get("zone_difficile_fee_eur", 0) or 0
 
-            # Filtrer Dachser sur le département
-            dfd = df_dachser.copy()
-            dfd["departement"] = dfd["departement"].astype(str).str.zfill(2)
-            dfd = dfd[dfd["departement"] == str(departement).zfill(2)]
+            # ------------------------------------------------------------
+            # Helper: calcule le prix Dachser pour UN département (part)
+            # ------------------------------------------------------------
+            def _dachser_part_for_dept(dep_code: str, zone_difficile: bool):
+                dep_code = str(dep_code).zfill(2)
 
-            if dfd.empty:
-                base = np.nan
-                info = "DACHSER ignoré : département absent"
-            else:
+                dfd = df_dachser.copy()
+                dfd["departement"] = dfd["departement"].astype(str).str.zfill(2)
+                dfd = dfd[dfd["departement"] == dep_code]
+
+                if dfd.empty:
+                    return np.nan
+
                 # Choisir la bonne ligne selon difficulté (vide vs non vide)
                 row = dfd.iloc[0]
                 if "difficulte" in dfd.columns:
                     diff = dfd["difficulte"].apply(lambda x: "" if pd.isna(x) else str(x).strip())
                     has_diff = diff.ne("") & diff.ne("nan")
 
-                    dfd2 = dfd[has_diff] if is_zone_difficile else dfd[~has_diff]
+                    dfd2 = dfd[has_diff] if zone_difficile else dfd[~has_diff]
                     if not dfd2.empty:
                         row = dfd2.iloc[0]
 
-                # Calcul tranches kg sur la ligne choisie
+                # Calcul tranches kg
                 if cfg_dachser.get("split_100kg", True) and poids_total > 100:
-                    base = trouver_prix_100kg(row, poids_total, cfg_dachser.get("rounding_10kg", True))
+                    return trouver_prix_100kg(row, poids_total, cfg_dachser.get("rounding_10kg", True))
                 else:
-                    base = trouver_prix_forfait(row, poids_total)
+                    return trouver_prix_forfait(row, poids_total)
 
-                # Ajout des frais
+            # ------------------------------------------------------------
+            # MULTI TRIP (ex: dep 20 = dep 13 + dep 20)
+            # ------------------------------------------------------------
+            dep = str(departement).zfill(2)
+            multi = cfg_dachser.get("multi_trip_dept", {})
+
+            info_multi = None
+
+            if dep in multi:
+                total = 0.0
+                parts = []
+                for d in multi[dep]:
+                    part = _dachser_part_for_dept(d, is_zone_difficile)
+                    if pd.isna(part):
+                        base = np.nan
+                        info = f"DACHSER ignoré : département {str(d).zfill(2)} absent ou tranche non trouvée"
+                        break
+                    total += float(part)
+                    parts.append(f"{str(d).zfill(2)}={round(float(part),2)}€")
+                else:
+                    base = total
+                    info_multi = f"multi-trip {dep}=(" + " + ".join(parts) + ")"
+            else:
+                base = _dachser_part_for_dept(dep, is_zone_difficile)
+                if pd.isna(base):
+                    info = "DACHSER ignoré : département absent"
+
+            # ------------------------------------------------------------
+            # Ajout des frais (1 seule fois)
+            # ------------------------------------------------------------
+            if not pd.isna(base):
                 added = fixed_fee + (zone_fee if is_zone_difficile else 0)
-                if not pd.isna(base):
-                    base = base + added
+
+                # ✅ Europe par palette (si configuré)
+                europe_fee = float(cfg_dachser.get("europe_pallet_fee_eur_per_pallet", 0) or 0)
+                surcharge_europe = 0.0
+                if europe_fee > 0 and nb_europe > 0:
+                    surcharge_europe = europe_fee * float(nb_europe)
+                    added += surcharge_europe
+
+                base = base + added
 
                 info = (
                     f"Poids total {poids_total} kg | "
@@ -626,6 +1123,13 @@ def compute_prices(
                     f"sup zone={zone_fee if is_zone_difficile else 0}€"
                 )
 
+                # ✅ ajoute l’info Europe
+                if surcharge_europe > 0:
+                    info += f" | pal_europe=+{round(surcharge_europe,2)}€ ({nb_europe}x)"
+
+                if info_multi:
+                    info = info_multi + " | " + info
+
     results.append((
         "DACHSER",
         base,
@@ -633,9 +1137,8 @@ def compute_prices(
         info
     ))
 
-
     # ============================================================
-    # KUEHNE (avec zone difficile via code postal)
+    # KUEHNE (zone difficile via CP + surcharges YAML + zones type)
     # ============================================================
     if not cfg_kuehne.get("enabled", True):
         base = np.nan
@@ -646,7 +1149,7 @@ def compute_prices(
             base = np.nan
             info = reason
         else:
-            is_zone_difficile = code_postal in kuehne_zone
+            is_zone_difficile = (code_postal in kuehne_zone)
 
             dfk = df_kuehne.copy()
             dfk["departement"] = dfk["departement"].astype(str).str.zfill(2)
@@ -663,19 +1166,86 @@ def compute_prices(
 
                     dfk2 = dfk[has_diff] if is_zone_difficile else dfk[~has_diff]
                     if dfk2.empty:
-                        dfk2 = dfk  # fallback
-
+                        dfk2 = dfk
                     row = dfk2.iloc[0]
                 else:
-                    row = dfk.iloc[0]  # fallback si pas de colonne difficulté
+                    row = dfk.iloc[0]
 
-                # Calcul prix sur la ligne choisie
+                # Prix base
                 if cfg_kuehne.get("split_100kg", True) and poids_total > 100:
                     base = trouver_prix_100kg(row, poids_total, cfg_kuehne.get("rounding_10kg", True))
                 else:
                     base = trouver_prix_forfait(row, poids_total)
 
-                info = f"Poids total {poids_total} kg | zone difficile={is_zone_difficile}"
+                # --- type de zone (URBAIN / SAISONNIER)
+                zone_type = None
+                is_urbain = False
+                is_saisonnier_zone = False
+
+                # (si tu n’as pas encore branché l’onglet, ces variables resteront False)
+                if "kuehne_cp_to_type" in locals() and "kuehne_ranges" in locals() and "kuehne_dept_prefix_type" in locals():
+                    zone_type = kuehne_get_type(
+                        code_postal, departement,
+                        kuehne_cp_to_type, kuehne_ranges, kuehne_dept_prefix_type
+                    )
+                    is_urbain = (zone_type == "URBAIN")
+                    is_saisonnier_zone = (zone_type == "SAISONNIER")
+
+                # Surcharges YAML
+                added = 0.0
+                details = []
+
+                fixed_fee = float(cfg_kuehne.get("fixed_fee_eur", 0) or 0)
+                if fixed_fee > 0:
+                    added += fixed_fee
+                    details.append(f"forfait={fixed_fee}€")
+
+                europe_fee = float(cfg_kuehne.get("europe_pallet_fee_eur_per_pallet", 0) or 0)
+                nb_europe = count_europe_palettes(palettes)
+                if europe_fee > 0 and nb_europe > 0:
+                    fee = europe_fee * float(nb_europe)
+                    added += fee
+                    details.append(f"pal_europe=+{round(fee,2)}€")
+
+
+                # ✅ CORSE : basé sur le code postal 20xxx (pas 2A/2B)
+                corsica_fee = float(cfg_kuehne.get("corsica_dept20_fee_eur", 0) or 0)
+                if str(code_postal).startswith("20") and corsica_fee > 0:
+                    added += corsica_fee
+                    details.append(f"corse=+{corsica_fee}€")
+
+                urb_cfg = cfg_kuehne.get("urbain", {})
+                if urb_cfg.get("enabled", False) and is_urbain:
+                    urb_fee = float(urb_cfg.get("fee_eur", 0) or 0)
+                    if urb_fee > 0:
+                        added += urb_fee
+                        details.append(f"urbain=+{urb_fee}€")
+
+                saison_cfg = cfg_kuehne.get("saisonnier", {})
+                if saison_cfg.get("enabled", False) and is_saisonnier_zone:
+                    p = saison_cfg.get("period", {})
+                    start = p.get("start", "05-01")
+                    end = p.get("end", "08-31")
+
+                    if is_in_period_mmdd(start, end):
+                        percent = float(saison_cfg.get("percent_of_freight", 0) or 0)
+                        if percent > 0 and not pd.isna(base):
+                            fee = float(base) * (percent / 100.0)
+                            added += fee
+                            details.append(f"saisonnier=+{round(percent,2)}%")
+                    else:
+                        details.append("saisonnier=hors période")
+
+                if not pd.isna(base):
+                    base = float(base) + float(added)
+
+                info = (
+                    f"Poids total {poids_total} kg"
+                    f" | zone difficile={is_zone_difficile}"
+                    f" | zone_type={zone_type}"
+                )
+                if details:
+                    info += " | " + " + ".join(details)
 
     results.append((
         "KUEHNE",
@@ -683,6 +1253,7 @@ def compute_prices(
         appliquer_taxe_et_rfa(base, "KUEHNE", taxes, rfa),
         info
     ))
+
 
     # ============================================================
     # XPO
@@ -719,15 +1290,27 @@ def compute_prices(
                 else:
                     surcharge_acces = min(150.0, 15.0 * (pt_total / 100.0))
 
+            # Palette Europe : frais par palette Europe (paramétrable)
+            europe_fee_per_pallet = float(cfg_xpo.get("europe_pallet_fee_eur_per_pallet", 0) or 0)
+            nb_europe = count_europe_palettes(palettes)
+
+            surcharge_europe = 0.0
+            if europe_fee_per_pallet > 0 and nb_europe > 0:
+                surcharge_europe = europe_fee_per_pallet * float(nb_europe)
+
+
+
             # Ajout des frais si base valide
             if not pd.isna(base):
-                base = base + fixed_fee + surcharge_acces + surcharge_gv
+                base = base + fixed_fee + surcharge_acces + surcharge_gv + surcharge_europe
 
                 info = (
                     f"{info}"
                     f" + forfait {fixed_fee}€"
                     f" | accès difficile={is_acces_difficile}"
+                    f" | palettes_europe={nb_europe} (+{round(surcharge_europe,2)}€)"
                 )
+
 
                 if is_acces_difficile:
                     info += f" (poids taxé={pt_total} kg, +{round(surcharge_acces,2)}€)"
