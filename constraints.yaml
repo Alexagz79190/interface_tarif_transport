@@ -8,13 +8,14 @@ GLOBAL:
 XPO:
   enabled: true
   palette_parfaite_required: true
-  fixed_fee_eur: 3.00
+  fixed_fee_eur: 1.70
+  europe_pallet_fee_eur_per_pallet: 1.50
 
   # Formats acceptés (cm)
   allowed_formats_cm:
-    - [80, 120]
+    - [120, 80]
     - [60, 80]
-    - [100, 120]
+    - [120, 100]
 
   # Hauteur maximum (cm)
   max_height_cm: 220
@@ -41,10 +42,32 @@ GEODIS:
     max_length_m: 4.0
     max_height_m: 2.0
 
+  # === Frais additionnels (paramétrables) ===
+  fixed_fee_eur: 2.10
+  europe_pallet_fee_eur_per_pallet: 0.00             # ✅ frais par palette en Europe
+
+  zone_difficile:
+    enabled: true
+    fee_eur: 6.70
+
+  zone_urbaine:
+    enabled: true
+    fees_eur:
+      zone_a:
+        "0_30": 1.90
+        "30_100": 4.10
+        "100_plus": 6.20
+      zone_b:
+        "0_30": 3.40
+        "30_100": 6.80
+        "100_plus": 10.40
+
+
 DACHSER:
   enabled: true
-  zone_difficile_fee_eur: 0.00     # ✅ supplément zone difficile  
-  fixed_fee_eur: 3.98              # ✅ supplément fixe par expédition
+  zone_difficile_fee_eur: 0.00                      # ✅ supplément zone difficile  
+  fixed_fee_eur: 4.18
+  europe_pallet_fee_eur_per_pallet: 0.00             # ✅ frais par palette en Europe
   split_100kg: true
   rounding_10kg: true
   limits:
@@ -55,9 +78,27 @@ DACHSER:
   multi_trip_dept:
     "20": ["13", "20"]
 
+
+
 KUEHNE:
-  enabled: false             # ✅ désactivé
+  enabled: true             # ✅ désactivé
+
   split_100kg: true
   rounding_10kg: true
   limits:
     max_total_weight_kg: 1500
+
+  fixed_fee_eur: 2.0
+  europe_pallet_fee_eur_per_pallet: 6.50    # ✅ frais par palette en Europe
+  corsica_dept20_fee_eur: 15.0
+
+  urbain:
+    enabled: true
+    fee_eur: 5.0
+
+  saisonnier:
+    enabled: false
+    percent_of_freight: 15.0
+    period:
+      start: "05-01"   # 1er mai
+      end: "08-31"     # 31 août
