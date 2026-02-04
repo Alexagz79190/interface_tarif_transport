@@ -337,7 +337,7 @@ for i, p in enumerate(st.session_state.palettes):
         p["is_europe"] = st.toggle(f"Palette Europe", value=p["is_europe"], key=f"is_europe_{i}")
 
     with c1:
-        p["poids"] = st.number_input(f"Poids (kg) {i+1}", min_value=0.0, value=float(p["poids"]), key=f"poids_{i}")
+        p["poids"] = st.number_input(f"Poids (kg) {i+1}", min_value=0.0, value=float(p["poids"]), step=1.0, key=f"poids_{i}")
 
     # --- LOGIQUE DE FORMAT ---
     allowed_formats = [
@@ -379,7 +379,8 @@ for i, p in enumerate(st.session_state.palettes):
             p["L"] = st.number_input(
                 f"Longueur (cm)", 
                 min_value=0.0, 
-                value=float(p["L"]), 
+                value=float(p["L"]),
+                step=1.0,
                 key=f"L_{i}", 
                 disabled=False  # <--- CHANGEMENT ICI : Jamais bloqué en mode libre
             )
@@ -387,13 +388,14 @@ for i, p in enumerate(st.session_state.palettes):
             p["l"] = st.number_input(
                 f"largeur (cm)", 
                 min_value=0.0, 
-                value=float(p["l"]), 
+                value=float(p["l"]),
+                step=1.0,
                 key=f"l_{i}", 
                 disabled=False  # <--- CHANGEMENT ICI : Jamais bloqué en mode libre
             )
 
     with c4:
-        p["H"] = st.number_input(f"Hauteur (cm)", min_value=0.0, value=float(p["H"]), key=f"H_{i}")
+        p["H"] = st.number_input(f"Hauteur (cm)", min_value=0.0, value=float(p["H"]), step=1.0, key=f"H_{i}")
 
     with c5:
         if len(st.session_state.palettes) > 1:
