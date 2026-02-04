@@ -377,7 +377,7 @@ for i, p in enumerate(st.session_state.palettes):
         # Si on vient de cocher Europe, on suggère 120x80 mais on ne BLOQUE PAS
         with c2:
             p["L"] = st.number_input(
-                f"L (cm) {i+1}", 
+                f"Longueur (cm)", 
                 min_value=0.0, 
                 value=float(p["L"]), 
                 key=f"L_{i}", 
@@ -385,7 +385,7 @@ for i, p in enumerate(st.session_state.palettes):
             )
         with c3:
             p["l"] = st.number_input(
-                f"l (cm) {i+1}", 
+                f"largeur (cm)", 
                 min_value=0.0, 
                 value=float(p["l"]), 
                 key=f"l_{i}", 
@@ -393,7 +393,7 @@ for i, p in enumerate(st.session_state.palettes):
             )
 
     with c4:
-        p["H"] = st.number_input(f"H (cm) {i+1}", min_value=0.0, value=float(p["H"]), key=f"H_{i}")
+        p["H"] = st.number_input(f"Hauteur (cm)", min_value=0.0, value=float(p["H"]), key=f"H_{i}")
 
     with c5:
         if len(st.session_state.palettes) > 1:
