@@ -360,7 +360,7 @@ for i, p in enumerate(st.session_state.palettes):
             lock_select = p["is_europe"]
             
             selected_fmt = st.selectbox(
-                f"Format {i+1}",
+                f"Format",
                 options=allowed_formats,
                 format_func=lambda x: x["label"],
                 index=0 if lock_select else idx_default,
@@ -370,7 +370,7 @@ for i, p in enumerate(st.session_state.palettes):
             p["L"], p["l"] = selected_fmt["dims"]
         
         with c3:
-            st.text_input("Largeur", value=f"{p['l']} cm", key=f"l_view_{i}", disabled=True)
+            st.text_input("Largeur (cm)", value=f"{p['l']} cm", key=f"l_view_{i}", disabled=True)
     
     else:
         # MODE LIBRE : L'utilisateur fait ce qu'il veut
