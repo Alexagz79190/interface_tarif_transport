@@ -81,7 +81,7 @@ DACHSER:
 
 
 KUEHNE:
-  enabled: false             # ✅ désactivé
+  enabled: true             # ✅ Activé
 
   split_100kg: true
   rounding_10kg: true
